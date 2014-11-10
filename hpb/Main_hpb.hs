@@ -1,7 +1,8 @@
 module Main (main) where
 
-import Control.Lens
 import Control.Exception
+import Control.Lens
+import Control.Monad
 import qualified Data.ByteString.Lazy as LazyBS
 import qualified Data.Foldable as Fold
 import Data.Sequence (Seq)
@@ -52,21 +53,35 @@ data ArgAction
    | ShowVersion
 
 data Args
-  = Args { _argAction :: ArgAction
-         , _protoFiles :: Seq FilePath
+  = Args { _argAction :: !ArgAction
+         , _protoFiles :: !(Seq FilePath)
+         , _importDirs :: !(Seq FilePath)
+         , _outDir     :: !(Maybe FilePath)
          }
 
 -- | Initial arguments if nothing is specified.
 defaultArgs :: Args
 defaultArgs = Args { _argAction = GenerateCode
                    , _protoFiles = Seq.empty
+                   , _importDirs = Seq.empty
+                   , _outDir = Nothing
                    }
 
+-- | Action to use for assigning.
 argAction :: Simple Lens Args ArgAction
 argAction = lens _argAction (\a v -> a { _argAction = v })
 
+-- | List of paths to output.
 protoFiles :: Simple Lens Args (Seq FilePath)
 protoFiles = lens _protoFiles (\a v -> a { _protoFiles = v })
+
+-- | List of directories to use for searching for imports.
+importDirs :: Simple Lens Args (Seq FilePath)
+importDirs = lens _importDirs (\a v -> a { _importDirs = v })
+
+-- | List of directories to use for searching for imports.
+outDir :: Simple Lens Args (Maybe FilePath)
+outDir = lens _outDir (\a v -> a { _outDir = v })
 
 filenameArg :: Arg Args
 filenameArg = Arg { argValue = addFilename
@@ -77,14 +92,26 @@ filenameArg = Arg { argValue = addFilename
         addFilename nm a = Right (a & protoFiles %~ (Seq.|> nm))
 
 parseFlag :: Flag Args
-parseFlag = flagNone [ "parse", "p" ] upd help
+parseFlag = flagNone [ "parse", "P" ] upd help
   where upd  = argAction .~ ShowParse
         help = "Parse PROTO_FILES files and show output for debugging purposes."
+
+importFlag :: Flag Args
+importFlag = flagReq [ "proto_path", "I" ] upd "PATH" help
+  where upd path a = Right (a & importDirs %~ (Seq.|> path))
+        help = "Specify directory to search for imports."
+
+outDirFlag :: Flag Args
+outDirFlag = flagReq ["out", "O" ] upd "OUT_DIR" help
+  where upd path a = Right (a & outDir .~ Just path)
+        help = "Specify where to write generated files."
 
 arguments :: Mode Args
 arguments = mode "hpb" defaultArgs help filenameArg flags
   where help = hpbVersion
         flags = [ parseFlag
+                , importFlag
+                , outDirFlag
                 , flagHelpSimple (argAction .~ ShowHelp)
                 , flagVersion (argAction .~ ShowVersion)
                 ]
@@ -99,9 +126,11 @@ getCommandLineArgs = do
     Right v -> return v
 
 showParse :: Args -> IO ()
-showParse args =
+showParse args = do
+  when (Seq.null (args^.protoFiles)) $ do
+    fail $ "Please provide a proto file to parse."
   Fold.forM_ (args^.protoFiles) $ \path -> do
-    decls <- loadAndParseFile path `catch` exitOnError
+    decls <- loadAndParseFile path
     PP.displayIO stdout $ PP.renderPretty 1.0 maxBound $ ppDecls decls
     putStrLn ""
 
@@ -132,7 +161,6 @@ loadAndParseFile path = do
 
 main :: IO ()
 main = do
-  -- TODO Parse arguments.
   args <- getCommandLineArgs
   case args^.argAction of
     GenerateCode -> do
