@@ -1,0 +1,46 @@
+Name:          hpb
+Version:       0.1.0
+Author:        Joe Hendrix
+Maintainer:    jhendrix@galois.com
+Build-type:    Simple
+Cabal-version: >= 1.9.2
+
+library
+  build-depends:
+    base
+
+  hs-source-dirs:
+    src
+
+  exposed-modules:
+    Data.HPB
+
+
+  ghc-options: -Wall -threaded
+  ghc-prof-options: -O2 -fprof-auto-top
+
+
+executable hpb
+  build-depends:
+    base >= 4,
+    array,
+    bytestring,
+    cmdargs,
+    containers,
+    lens,
+    mtl,
+    text,
+    utf8-string,
+    wl-pprint
+  build-tools: alex, happy
+
+  ghc-options: -Wall -threaded -rtsopts
+  ghc-prof-options: -fprof-auto-top -O2
+
+  other-modules:
+    Data.HPB.Lexer
+    Data.HPB.Parser
+    Data.HPB.Generator
+
+  hs-source-dirs: hpb
+  main-is: Main_hpb.hs
