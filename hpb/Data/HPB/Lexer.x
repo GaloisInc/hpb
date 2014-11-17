@@ -9,11 +9,8 @@ module Data.HPB.Lexer
   ( Base(..)
   , NumLit(..)
   , StringLit(..)
-  , ScalarType(..)
   , CustomOption(..)
   , Token(..)
-  , Posd(..)
-  , SourcePos(..)
   , Alex
   , runAlex
   , getSourcePos
@@ -35,6 +32,8 @@ import qualified Data.Text as Text
 import Data.Text.Encoding
 import Data.Word
 import Text.PrettyPrint.Leijen as PP hiding (line)
+
+import Data.HPB.AST
 }
 
 $alpha     = [a-z A-Z]
@@ -47,6 +46,7 @@ $any = [. $newline]
   = "enum"
   | "extend"
   | "extensions"
+  | "false"
   | "import"
   | "max"
   | "message"
@@ -61,6 +61,7 @@ $any = [. $newline]
   | "rpc"
   | "service"
   | "to"
+  | "true"
 
 @special = "(" | ")" | "[" | "]" | "{" | "}" | "=" | "." | "," | ";"
 
@@ -94,7 +95,7 @@ protocTokens :-
 "bytes"    { mkScalarType BytesType }
 
 -- Identifiers
-@idname { TIdent }
+@idname { TIdent . Ident }
 
 "(" @idname ")" { TCustomOption . CustomOption . trimText 1 1 }
 
@@ -112,49 +113,7 @@ nlByte :: Word8
 nlByte = fromIntegral (fromEnum '\n')
 
 ------------------------------------------------------------------------
--- Base
-
-data Base = Oct | Dec | Hex
-
-baseVal :: Base -> Integer
-baseVal Oct =  8
-baseVal Dec = 10
-baseVal Hex = 16
-
-------------------------------------------------------------------------
--- NumLit
-
-data NumLit = NumLit Base Integer
-
-instance Show NumLit where
-  show n = show (pretty n)
-
-instance Pretty NumLit where
-  pretty (NumLit b v) = do
-    let ppNum 0 = text "0"
-        ppNum n = ppDigits n PP.empty
-        ppDigits 0 prev = prev
-        ppDigits n prev = do
-          let (q,r) = n `quotRem` baseVal b
-          ppDigits q (integer r <> prev)
-    case b of
-      Oct -> text "0" <> ppNum v
-      Dec -> ppNum v
-      Hex -> text "0x" <> ppNum v
-
-------------------------------------------------------------------------
--- StringLit
-
-newtype StringLit = StringLit Text
-
-instance Show StringLit where
-  show l = show (pretty l)
-
-instance Pretty StringLit where
-  pretty (StringLit t) = text "\"" <> Text.foldr go (text "\"") t
-    where go '\\' s = text "\\\\" <> s
-          go '\"' s = text "\\\"" <> s
-          go c s = char c <> s
+-- Parsing operations
 
 trimText :: Int -> Int -> Text -> Text
 trimText f e = Text.drop f . Text.dropEnd e
@@ -173,56 +132,6 @@ parseStringLit txt0 = StringLit (Text.unfoldrN (Text.length txt0) go txt_trim)
                  _ -> error "internal: Could not interpret string literal."
             _ -> return (c, txt1)
 
-------------------------------------------------------------------------
--- ScalarType
-
-data ScalarType
-   = DoubleType
-   | FloatType
-   | Int32Type
-   | Int64Type
-   | Uint32Type
-   | Uint64Type
-   | Sint32Type
-   | Sint64Type
-   | Fixed32Type
-   | Fixed64Type
-   | Sfixed32Type
-   | Sfixed64Type
-   | BoolType
-   | StringType
-   | BytesType
-
-
-instance Show ScalarType where
-  show tp =
-    case tp of
-      DoubleType   -> "double"
-      FloatType    -> "float"
-      Int32Type    -> "int32"
-      Int64Type    -> "int64"
-      Uint32Type   -> "uint32"
-      Uint64Type   -> "uint64"
-      Sint32Type   -> "sint32"
-      Sint64Type   -> "sint64"
-      Fixed32Type  -> "fixed32"
-      Fixed64Type  -> "fixed64"
-      Sfixed32Type -> "sfixed32"
-      Sfixed64Type -> "sfixed64"
-      BoolType     -> "bool"
-      StringType   -> "string"
-      BytesType    -> "bytes"
-
-instance Pretty ScalarType where
-  pretty tp = text (show tp)
-
-------------------------------------------------------------------------
--- CustomOption
-
-newtype CustomOption = CustomOption Text
-
-instance Pretty CustomOption where
-  pretty (CustomOption t) = parens (text (Text.unpack t))
 
 ------------------------------------------------------------------------
 -- Token
@@ -230,7 +139,7 @@ instance Pretty CustomOption where
 data Token
      -- | The base of an number and its value.
    = TNum NumLit
-   | TIdent Text
+   | TIdent Ident
      -- | The name of an extension.
    | TString StringLit
    | TScalar ScalarType
@@ -241,7 +150,7 @@ data Token
 
 instance Show Token where
   show (TNum l) = show l
-  show (TIdent t) = Text.unpack t
+  show (TIdent t) = show t
   show (TCustomOption t) = show (pretty t)
   show (TString t) = show t
   show (TKeyword t) = Text.unpack t
@@ -258,29 +167,6 @@ mkStringLit txt0 = TString (parseStringLit txt0)
 
 mkScalarType :: ScalarType -> Text -> Token
 mkScalarType tp _ = TScalar tp
-
-------------------------------------------------------------------------
--- SourcePos
-
-data SourcePos = Pos { filename :: !Text
-                     , line :: !Int
-                     , col :: !Int
-                     } deriving Show
-
-nextCol :: SourcePos -> SourcePos
-nextCol p = p { col = col p + 1 }
-
-nextLine :: SourcePos -> SourcePos
-nextLine p = p { line = line p + 1
-               , col = 0
-               }
-
-------------------------------------------------------------------------
--- Posd
-
-data Posd v = Posd { val :: !v
-                   , pos :: !SourcePos
-                   } deriving (Functor, Show)
 
 ------------------------------------------------------------------------
 -- AlexInput

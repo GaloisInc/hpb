@@ -16,7 +16,10 @@ import System.IO
 import System.IO.Error
 import qualified Text.PrettyPrint.Leijen as PP
 
+import qualified Data.HPB.AST as A
 import Data.HPB.Parser
+import Data.HPB.Resolver
+
 
 import Paths_hpb (version)
 
@@ -128,10 +131,10 @@ getCommandLineArgs = do
 showParse :: Args -> IO ()
 showParse args = do
   when (Seq.null (args^.protoFiles)) $ do
-    fail $ "Please provide a proto file to parse."
+    fail $ "Please provide a proto file as input."
   Fold.forM_ (args^.protoFiles) $ \path -> do
-    decls <- loadAndParseFile path
-    PP.displayIO stdout $ PP.renderPretty 1.0 maxBound $ ppDecls decls
+    p <- loadAndParseFile path
+    PP.displayIO stdout $ PP.renderPretty 1.0 maxBound $ PP.pretty p
     putStrLn ""
 
 printErrorAndExit :: String -> IO a
@@ -142,7 +145,7 @@ printErrorAndExit msg = do
 exitOnError :: IOError -> IO a
 exitOnError e = printErrorAndExit (ioeGetErrorString e)
 
-loadAndParseFile :: FilePath -> IO [Decl]
+loadAndParseFile :: FilePath -> IO A.Package
 loadAndParseFile path = do
   mcontents <- try $ LazyBS.readFile path
   case mcontents of
@@ -159,13 +162,22 @@ loadAndParseFile path = do
           fail $ "Error parsing " ++ path ++ ":\n"
                   ++ show (PP.indent 2 (PP.text msg))
 
+
+generateCode :: Args -> IO ()
+generateCode args = do
+  when (Seq.null (args^.protoFiles)) $ do
+    fail $ "Please provide a proto file as input."
+  Fold.forM_ (args^.protoFiles) $ \path -> do
+    decls <- loadAndParseFile path
+    case resolvePackage path decls of
+      Left msg -> fail msg
+      Right pkg -> print (PP.pretty pkg)
+
 main :: IO ()
 main = do
   args <- getCommandLineArgs
   case args^.argAction of
-    GenerateCode -> do
-      error "GenerateCode undefined"
-      -- Write generated code to output.
+    GenerateCode -> generateCode args `catch` exitOnError
     ShowParse -> showParse args `catch` exitOnError
       -- Parse proto file.
     ShowHelp -> do

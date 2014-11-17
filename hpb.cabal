@@ -7,7 +7,16 @@ Cabal-version: >= 1.9.2
 
 library
   build-depends:
-    base
+    base,
+    bytestring,
+    containers,
+    data-binary-ieee754,
+    hashtables,
+    lens,
+    mtl,
+    text,
+    unordered-containers,
+    vector
 
   hs-source-dirs:
     src
@@ -27,6 +36,7 @@ executable hpb
     bytestring,
     cmdargs,
     containers,
+    filepath,
     lens,
     mtl,
     text,
@@ -40,7 +50,7 @@ executable hpb
   other-modules:
     Data.HPB.Lexer
     Data.HPB.Parser
-    Data.HPB.Generator
+    Data.HPB.Resolver
 
   hs-source-dirs: hpb
   main-is: Main_hpb.hs

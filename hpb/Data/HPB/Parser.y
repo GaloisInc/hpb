@@ -1,16 +1,7 @@
 {
 {-# LANGUAGE OverloadedStrings #-}
 module Data.HPB.Parser
-  ( Decl(..)
-  , ImportVis(..)
-  , CompoundName(..)
-  , Ident(..)
-  , Val(..)
-  , EnumDecl(..)
-  , MessageDecl(..)
-  , ExtendDecl(..)
-  , ppDecls
-  , parseDecls
+  ( parseDecls
   ) where
 
 import Control.Applicative
@@ -20,6 +11,7 @@ import qualified Data.Text as Text
 import Text.PrettyPrint.Leijen hiding ((<$>))
 import qualified Text.PrettyPrint.Leijen as PP
 
+import Data.HPB.AST
 import Data.HPB.Lexer
 }
 
@@ -46,13 +38,14 @@ import Data.HPB.Lexer
   ','          { Posd (TSpecial ",") _ }
   ';'          { Posd (TSpecial ";") _ }
 
-  'enum'       { Posd (TKeyword "enum")    _ }
-  'extend'     { Posd (TKeyword "extend")  _ }
+  'enum'       { Posd (TKeyword "enum")       _ }
+  'extend'     { Posd (TKeyword "extend")     _ }
   'extensions' { Posd (TKeyword "extensions") _ }
-  'import'     { Posd (TKeyword "import")  _ }
+  'false'      { Posd (TKeyword "false")      _ }
+  'import'     { Posd (TKeyword "import")   _ }
   'max'        { Posd (TKeyword "max")      _ }
   'message'    { Posd (TKeyword "message")  _ }
-  'oneof'      { Posd (TKeyword "oneof")   _ }
+  'oneof'      { Posd (TKeyword "oneof")    _ }
   'option'     { Posd (TKeyword "option")   _ }
   'optional'   { Posd (TKeyword "optional") _ }
   'package'    { Posd (TKeyword "package")  _ }
@@ -63,15 +56,16 @@ import Data.HPB.Lexer
   'rpc'        { Posd (TKeyword "rpc")      _ }
   'service'    { Posd (TKeyword "service")  _ }
   'to'         { Posd (TKeyword "to")       _ }
+  'true'       { Posd (TKeyword "true")     _ }
 %%
 
 
-topLevel :: { [Decl] }
-topLevel : list(decl) { $1 }
+topLevel :: { Package }
+topLevel : 'package' compound_name ';' list(decl) { Package (Just $2) $4 }
+         | list(decl) { Package Nothing $1 }
 
 decl :: { Decl }
-decl : 'package' compound_name ';' { PackageName $2 }
-     | 'import' importvis string ';' { Import $2 $3 }
+decl : 'import' importvis string ';' { Import $2 $3 }
      | option_decl  { Option $1 }
      | enum_decl    { Enum $1 }
      | extend_decl  { Extend $1 }
@@ -88,9 +82,9 @@ inline_option : option_name '=' val { OptionDecl $1 $3 }
 option_decl :: { OptionDecl }
 option_decl : 'option' inline_option ';' { $2 }
 
-option_name :: { OptionName }
-option_name : ident { KnownName $1 }
-            | custom_option list(option_deref) { CustomName $1 $2 }
+option_name :: { Posd OptionName }
+option_name : ident { KnownName `fmap` $1 }
+            | custom_option list(option_deref) { (`CustomName` $2) `fmap` $1 }
 
 custom_option :: { Posd CustomOption }
 custom_option : custom_option_tkn { tknAsCustomOption `fmap` $1 }
@@ -170,6 +164,8 @@ val :: { Posd Val }
 val : ident  { IdentVal `fmap` $1 }
     | num    { NumVal `fmap` $1 }
     | string { StringVal `fmap` $1 }
+    | 'true'  { Posd (BoolVal True)  (pos $1) }
+    | 'false' { Posd (BoolVal False) (pos $1) }
 
 compound_name :: { CompoundName }
 compound_name : compound_name_rev { CompoundName (reverse $1) }
@@ -205,204 +201,10 @@ list_rev(e) : { [] }
             | list_rev(e) e { $2 : $1 }
 
 {
-
-------------------------------------------------------------------------
--- Ident
-
-newtype Ident = Ident Text
-
-instance Pretty Ident where
-  pretty (Ident nm) = text (Text.unpack nm)
-
-------------------------------------------------------------------------
--- CompoundName
-
-newtype CompoundName = CompoundName [Posd Ident]
-
-instance Pretty CompoundName where
-  pretty (CompoundName nms) = hcat (punctuate dot (pretty . val <$> nms))
-
-------------------------------------------------------------------------
--- Val
-
-data Val
-   = NumVal    NumLit
-   | IdentVal  Ident
-   | StringVal StringLit
-
-instance Pretty Val where
-  pretty (NumVal v) = pretty v
-  pretty (IdentVal v) = pretty v
-  pretty (StringVal v) = pretty v
-
-------------------------------------------------------------------------
--- EnumValue
-
-data EnumValue = EnumValue (Posd Ident) (Posd NumLit)
-
-instance Pretty EnumValue where
-  pretty (EnumValue nm l) = pretty (val nm) <+> text "=" <+> pretty (val l) <> text ";"
-
-------------------------------------------------------------------------
--- EnumDecl
-
-data EnumDecl = EnumDecl (Posd Ident) [EnumValue]
-
-instance Pretty EnumDecl where
-  pretty (EnumDecl nm opts) =
-    text "enum" <+> pretty (val nm) <+> text "{" <$$>
-    indent 2 (vcat (pretty <$> opts)) <$$>
-    text "}"
-
-------------------------------------------------------------------------
--- FieldRule
-
-data FieldRule = Required | Optional | Repeated
-
-instance Pretty FieldRule where
-  pretty Required = text "required"
-  pretty Optional = text "optional"
-  pretty Repeated = text "repeated"
-
-------------------------------------------------------------------------
--- FieldType
-
-data FieldType = ScalarFieldType ScalarType
-               | MessageFieldType CompoundName
-
-instance Pretty FieldType where
-  pretty (ScalarFieldType tp) = pretty tp
-  pretty (MessageFieldType nm) = pretty nm
-
-------------------------------------------------------------------------
--- Field
-
-data Field = Field  FieldType (Posd Ident) (Posd NumLit) [OptionDecl]
-
-instance Pretty Field where
-  pretty (Field tp nm v opts) =
-    pretty tp <+> pretty (val nm) <+> text "=" <+> pretty (val v)
-              <> ppInlineOptions opts <> text ";"
-
-ppInlineOptions :: [OptionDecl] -> Doc
-ppInlineOptions [] = PP.empty
-ppInlineOptions l = text " [" <> hsep (punctuate comma (pretty <$> l)) <> text "]"
-
-------------------------------------------------------------------------
--- FieldDecl
-
-data FieldDecl = FieldDecl FieldRule Field
-
-instance Pretty FieldDecl where
-  pretty (FieldDecl rl f) = pretty rl <+> pretty f
-
-------------------------------------------------------------------------
--- ExtendDecl
-
-data ExtendDecl = ExtendDecl (Posd Ident) [FieldDecl]
-
-instance Pretty ExtendDecl where
-  pretty (ExtendDecl nm fields) =
-    text "extend" <+> pretty (val nm) <+> text "{" <$$>
-    indent 2 (vcat (pretty <$> fields)) <$$>
-    text "}"
-
-------------------------------------------------------------------------
--- OptionDecl
-
-data OptionDecl = OptionDecl !OptionName !(Posd Val)
-
-instance Pretty OptionDecl where
-  pretty (OptionDecl nm v) =
-    text "option" <+> pretty nm <+> text "=" <+> pretty (val v) <> text ";"
-
-
-data OptionName = KnownName !(Posd Ident)
-                | CustomName !(Posd CustomOption) ![Posd Ident]
-
-instance Pretty OptionName where
-  pretty (KnownName o) = pretty (val o)
-  pretty (CustomName o l) = pretty (val o) <> hsep ((\f -> text "." <> pretty (val f)) <$> l)
-
-------------------------------------------------------------------------
--- MessageDecl
-
-extensionMax :: NumLit
-extensionMax = NumLit Dec (2^(29::Int) - 1)
-
-data MessageDecl = MessageDecl (Posd Ident) [MessageField]
-
-data MessageField
-   = MessageField FieldDecl
-   | MessageOption OptionDecl
-   | OneOf (Posd Ident) [Field]
-   | Extensions (Posd NumLit) (Posd NumLit)
-   | LocalEnum    EnumDecl
-   | LocalMessage MessageDecl
-   | LocalExtend  ExtendDecl
-
-instance Pretty MessageDecl where
-  pretty (MessageDecl nm fields) =
-    text "message" <+> pretty (val nm) <+> text "{" <$$>
-    indent 2 (vcat (pretty <$> fields)) <$$>
-    text "}"
-
-instance Pretty MessageField where
-  pretty (MessageField f) = pretty f
-  pretty (Extensions l h) =
-    text "extensions" <+> pretty (val l) <+> text "to" <+> pretty (val h)
-  pretty (LocalEnum d)   = pretty d
-  pretty (LocalMessage d) = pretty d
-
-------------------------------------------------------------------------
--- ServiceDecl
-
-data ServiceDecl = ServiceDecl !(Posd Ident) !([ServiceField])
-
-data ServiceField
-   = ServiceOption !OptionDecl
-   | ServiceRpcMethod !RpcMethod
-
-data RpcMethod = RpcMethod { rpcName :: (Posd Ident)
-                           , rpcInputs :: [FieldType]
-                           , rpcReturns :: [FieldType]
-                           , rpcOptions :: [OptionDecl]
-                           }
-
-------------------------------------------------------------------------
--- Decl
-
-data ImportVis = Public | Private
-
-data Decl
-   = PackageName CompoundName
-   | Import ImportVis (Posd StringLit)
-   | Option OptionDecl
-   | Enum EnumDecl
-   | Message MessageDecl
-   | Extend ExtendDecl
-   | Service ServiceDecl
-
-instance Pretty Decl where
-  pretty d =
-    case d of
-      PackageName nm -> text "package" <+> pretty nm <> text ";"
-      Import v nm -> text "import" <> visd <+> pretty (val nm)
-        where visd = case v of
-                       Public -> text " public"
-                       Private -> PP.empty
-      Option d -> pretty d
-      Enum d -> pretty d
-      Message m -> pretty m
-      Extend d -> pretty d
-
-ppDecls :: [Decl] -> Doc
-ppDecls decls = vcat (pretty <$> decls)
-
 ------------------------------------------------------------------------
 -- Parsing declarations
 
-parseDecls :: FilePath -> LazyBS.ByteString -> Either String [Decl]
+parseDecls :: FilePath -> LazyBS.ByteString -> Either String Package
 parseDecls path bs = runAlex path bs parse
 
 parseError :: Posd Token -> Alex a
@@ -424,7 +226,7 @@ parseError tkn = do
 tknAsIdent :: Token -> Ident
 tknAsIdent tkn =
   case tkn of
-    TIdent t -> Ident t
+    TIdent t -> t
     _ -> error $ "internal: Token is not an identifier."
 
 tknAsNum :: Token -> NumLit
