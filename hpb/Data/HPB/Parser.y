@@ -77,7 +77,7 @@ importvis : { Private }
           | 'public' { Public }
 
 inline_option :: { OptionDecl }
-inline_option : option_name '=' val { OptionDecl $1 $3 }
+inline_option : option_name '=' val { OptionDecl $1 (val $3) }
 
 option_decl :: { OptionDecl }
 option_decl : 'option' inline_option ';' { $2 }
@@ -95,8 +95,10 @@ option_deref : '.' ident { $2 }
 enum_decl :: { EnumDecl }
 enum_decl : 'enum' ident '{' list(enum_value) '}' { EnumDecl $2 $4 }
 
-enum_value :: { EnumValue }
-enum_value : ident '=' num ';' { EnumValue $1 $3 }
+enum_value :: { EnumField }
+enum_value
+  : option_decl { EnumOption $1 }
+  | ident '=' num ';' { EnumValue $1 (val $3) }
 
 extend_decl :: { ExtendDecl }
 extend_decl : 'extend' ident '{' list(field_decl) '}' { ExtendDecl $2 $4 }
@@ -113,7 +115,7 @@ message_field
   : field_decl   { MessageField $1 }
   | option_decl  { MessageOption $1 }
   | 'oneof' ident '{' list(field) '}' { OneOf $2 $4 }
-  | 'extensions' num 'to' extension_upper { Extensions $2 $4 }
+  | 'extensions' num 'to' extension_upper ';' { Extensions $2 $4 }
   | enum_decl    { LocalEnum $1 }
   | message_decl { LocalMessage $1 }
   | extend_decl  { LocalExtend $1 }

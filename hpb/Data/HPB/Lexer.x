@@ -32,7 +32,6 @@ import qualified Data.Text as Text
 import Data.Text.Encoding
 import Data.Word
 import Text.PrettyPrint.Leijen as PP hiding (line)
-
 import Data.HPB.AST
 }
 
@@ -131,7 +130,6 @@ parseStringLit txt0 = StringLit (Text.unfoldrN (Text.length txt0) go txt_trim)
                  '\"' -> return ('\"', txt2)
                  _ -> error "internal: Could not interpret string literal."
             _ -> return (c, txt1)
-
 
 ------------------------------------------------------------------------
 -- Token
@@ -298,7 +296,8 @@ lexToken = do
       -- Get text from string.
       let s = decodeUtf8 $ LazyBS.toStrict $ LazyBS.take (fromIntegral len) (inp^.alex_bs)
       let p = inp^.alex_pos
-      return $ Posd (action s) p
+      let tkn = Posd (action s) p
+      return tkn
 
 getSourcePos :: Alex SourcePos
 getSourcePos = Alex $ use alex_pos

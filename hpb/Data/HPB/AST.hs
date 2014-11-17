@@ -17,7 +17,7 @@ module Data.HPB.AST
     -- * Enum
   , EnumDecl(..)
   , enumPos
-  , EnumValue(..)
+  , EnumField(..)
     -- * Services
   , ServiceDecl(..)
   , ServiceField(..)
@@ -42,6 +42,7 @@ module Data.HPB.AST
   ) where
 
 import Control.Applicative
+import Data.String
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Text.PrettyPrint.Leijen as PP hiding ((<$>), line)
@@ -52,7 +53,15 @@ import Text.PrettyPrint.Leijen as PP hiding ((<$>), line)
 data SourcePos = Pos { filename :: !Text
                      , line :: !Int
                      , col :: !Int
-                     } deriving Show
+                     }
+
+instance Pretty SourcePos where
+  pretty p = text (Text.unpack (filename p)) <> text ":"
+           <> int (line p) <> text ":"
+           <> int (col p)
+
+instance Show SourcePos where
+  show p = show (pretty p)
 
 nextCol :: SourcePos -> SourcePos
 nextCol p = p { col = col p + 1 }
@@ -72,8 +81,11 @@ data Posd v = Posd { val :: !v
 ------------------------------------------------------------------------
 -- Ident
 
-newtype Ident = Ident Text
+newtype Ident = Ident { identText :: Text }
   deriving (Eq, Ord)
+
+instance IsString Ident where
+  fromString = Ident . fromString
 
 instance Pretty Ident where
   pretty (Ident t) = text (Text.unpack t)
@@ -145,7 +157,9 @@ baseVal Hex = 16
 ------------------------------------------------------------------------
 -- NumLit
 
-data NumLit = NumLit Base Integer
+data NumLit = NumLit { numBase :: Base
+                     , numVal :: Integer
+                     }
 
 instance Show NumLit where
   show n = show (pretty n)
@@ -203,32 +217,38 @@ instance Pretty Val where
 ------------------------------------------------------------------------
 -- OptionDecl
 
-data OptionDecl = OptionDecl !(Posd OptionName) !(Posd Val)
+data OptionDecl = OptionDecl !(Posd OptionName) !Val
 
 instance Pretty OptionDecl where
   pretty (OptionDecl nm v) =
-    text "option" <+> pretty (val nm) <+> text "=" <+> pretty (val v) <> text ";"
+    text "option" <+> pretty (val nm) <+> text "=" <+> pretty v <> text ";"
 
 data OptionName = KnownName !Ident
                 | CustomName !CustomOption ![Posd Ident]
+
+instance IsString OptionName where
+  fromString nm = KnownName (fromString nm)
 
 instance Pretty OptionName where
   pretty (KnownName o) = pretty o
   pretty (CustomName o l) = pretty o <> hsep ((\f -> text "." <> pretty (val f)) <$> l)
 
 ------------------------------------------------------------------------
--- EnumValue
+-- EnumField
 
-data EnumValue = EnumValue (Posd Ident) (Posd NumLit)
+data EnumField
+   = EnumValue (Posd Ident) NumLit
+   | EnumOption OptionDecl
 
-instance Pretty EnumValue where
-  pretty (EnumValue nm l) = pretty (val nm) <+> text "=" <+> pretty (val l) <> text ";"
+instance Pretty EnumField where
+  pretty (EnumValue nm l) = pretty (val nm) <+> text "=" <+> pretty l <> text ";"
+  pretty (EnumOption d) = pretty d
 
 ------------------------------------------------------------------------
 -- EnumDecl
 
 data EnumDecl = EnumDecl { enumIdent :: !(Posd Ident)
-                         , enumValues :: !([EnumValue])
+                         , enumFields :: !([EnumField])
                          }
 
 enumPos :: EnumDecl -> SourcePos
