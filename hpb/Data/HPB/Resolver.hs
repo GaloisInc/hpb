@@ -90,9 +90,9 @@ instance Pretty Package where
   pretty pkg =
     text "module" <+> pretty (haskellModuleName pkg) <+> text "where" <$$>
     text "import Data.HPB" <$$>
-    text "import Prelude ()" <$$>
+    text "import Prelude (Enum(..), error, show, (++))" <$$>
     vcat (ppMessageDecl <$> moduleMessages pkg) <$$>
-    vcat (pretty <$> moduleEnum pkg)
+    vcat (ppEnumInfo <$> moduleEnum pkg)
 
 
 type FullyQualifiedMessageName = A.CompoundName
@@ -164,10 +164,34 @@ enumValues = lens _enumValues (\s v -> s { _enumValues = v })
 enumAllowAlias :: Simple Lens EnumInfo (Maybe Bool)
 enumAllowAlias = lens _enumAllowAlias (\s v -> s { _enumAllowAlias = v })
 
-instance Pretty EnumInfo where
-  pretty e =
-    text "data" <+> ppText (enumHaskellName e) <$$>
-    indent 3 (vcatPrefix1 (text "= ") (text "| ") (pretty <$> Map.keys (e^.enumCtors)))
+enumHaskellType :: EnumInfo -> Doc
+enumHaskellType = ppText . enumHaskellName
+
+ppToEnumBindings :: EnumInfo -> Doc
+ppToEnumBindings e = vcat (bindings ++ [end])
+  where bindings = ppToEnumBinding <$> Map.toList (e^.enumValues)
+        end = text "toEnum v = error (\""
+              <> enumHaskellType e
+              <+> text "given illegal value \" ++ show v ++ \".\")"
+
+ppToEnumBinding :: (Word32, [Ident]) -> Doc
+ppToEnumBinding (_,[]) = PP.empty
+ppToEnumBinding (w,h:_) = text "toEnum" <+> int (fromIntegral w) <+> equals <+> pretty h
+
+ppFromEnumBinding :: (Ident, Word32) -> Doc
+ppFromEnumBinding (nm,w) = text "fromEnum" <+> pretty nm <+> equals <+> int (fromIntegral w)
+
+ppEnumInfo :: EnumInfo -> Doc
+ppEnumInfo e =
+  text "data" <+> enumHaskellType e <$$>
+  indent 3 (vcatPrefix1 (text "= ") (text "| ") (pretty <$> Map.keys (e^.enumCtors))) <$$>
+  text "" <$$>
+  text "instance Enum" <+> enumHaskellType e <+> text "where" <$$>
+  indent 2 (ppToEnumBindings e) <$$>
+  indent 2 (vcat (ppFromEnumBinding <$> Map.toList (e^.enumCtors))) <$$>
+  text ""
+
+
 
 type EnumResolver = StateT EnumInfo (ErrorT String Identity)
 
