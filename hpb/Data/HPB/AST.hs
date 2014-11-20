@@ -1,8 +1,11 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable #-}
 module Data.HPB.AST
   ( Package(..)
   , Decl(..)
   , CompoundName(..)
+  , compoundNamePos
   , ImportVis(..)
   , ppDecls
     -- * Messages
@@ -42,9 +45,11 @@ module Data.HPB.AST
   ) where
 
 import Control.Applicative
+import Data.Foldable (Foldable)
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Traversable (Traversable)
 import Text.PrettyPrint.Leijen as PP hiding ((<$>), line)
 
 ------------------------------------------------------------------------
@@ -76,7 +81,7 @@ nextLine p = p { line = line p + 1
 
 data Posd v = Posd { val :: !v
                    , pos :: !SourcePos
-                   } deriving (Functor, Show)
+                   } deriving (Functor, Foldable, Traversable, Show)
 
 ------------------------------------------------------------------------
 -- Ident
@@ -101,6 +106,10 @@ newtype CompoundName = CompoundName [Posd Ident]
 instance Pretty CompoundName where
   pretty (CompoundName nms) = hcat (punctuate dot (pretty . val <$> nms))
 
+compoundNamePos :: CompoundName -> SourcePos
+compoundNamePos (CompoundName (h:_)) = pos h
+compoundNamePos _ = error "internal: empty compount name."
+
 ------------------------------------------------------------------------
 -- ScalarType
 
@@ -120,7 +129,7 @@ data ScalarType
    | BoolType
    | StringType
    | BytesType
-
+  deriving (Eq)
 
 instance Show ScalarType where
   show tp =
@@ -180,16 +189,16 @@ instance Pretty NumLit where
 ------------------------------------------------------------------------
 -- StringLit
 
-newtype StringLit = StringLit Text
+newtype StringLit = StringLit { stringText :: Text }
 
 instance Show StringLit where
   show l = show (pretty l)
 
 instance Pretty StringLit where
-  pretty (StringLit t) = text "\"" <> Text.foldr go (text "\"") t
-    where go '\\' s = text "\\\\" <> s
-          go '\"' s = text "\\\"" <> s
-          go c s = char c <> s
+  pretty (StringLit t) = dquotes (hcat (go <$> Text.unpack t))
+    where go '\\' = text "\\\\"
+          go '\"' = text "\\\""
+          go c = char c
 
 ------------------------------------------------------------------------
 -- CustomOption
@@ -217,11 +226,11 @@ instance Pretty Val where
 ------------------------------------------------------------------------
 -- OptionDecl
 
-data OptionDecl = OptionDecl !(Posd OptionName) !Val
+data OptionDecl = OptionDecl !(Posd OptionName) !(Posd Val)
 
 instance Pretty OptionDecl where
   pretty (OptionDecl nm v) =
-    text "option" <+> pretty (val nm) <+> text "=" <+> pretty v <> text ";"
+    text "option" <+> pretty (val nm) <+> text "=" <+> pretty (val v) <> text ";"
 
 data OptionName = KnownName !Ident
                 | CustomName !CustomOption ![Posd Ident]
@@ -264,24 +273,28 @@ instance Pretty EnumDecl where
 -- FieldType
 
 data FieldType = ScalarFieldType ScalarType
-               | MessageFieldType CompoundName
+               | NamedFieldType  CompoundName
+               | GlobalNamedType CompoundName
 
 instance Pretty FieldType where
   pretty (ScalarFieldType tp) = pretty tp
-  pretty (MessageFieldType nm) = pretty nm
+  pretty (NamedFieldType nm) = pretty nm
+  pretty (GlobalNamedType nm) = text "." <> pretty nm
 
 ------------------------------------------------------------------------
 -- Field
 
-data Field = Field { fieldType :: !FieldType
+data Field = Field { fieldType :: !(Posd FieldType)
                    , fieldName :: !(Posd Ident)
                    , fieldTag  :: !(Posd NumLit)
                    , fieldOptions :: [OptionDecl]
                    }
+
 instance Pretty Field where
   pretty (Field tp nm v opts) =
-    pretty tp <+> pretty (val nm) <+> text "=" <+> pretty (val v)
-              <> ppInlineOptions opts <> text ";"
+    pretty (val tp)
+      <+> pretty (val nm) <+> text "=" <+> pretty (val v)
+      <> ppInlineOptions opts <> text ";"
 
 ppInlineOptions :: [OptionDecl] -> Doc
 ppInlineOptions [] = PP.empty
@@ -309,7 +322,9 @@ instance Pretty FieldDecl where
 ------------------------------------------------------------------------
 -- ExtendDecl
 
-data ExtendDecl = ExtendDecl (Posd Ident) [FieldDecl]
+data ExtendDecl = ExtendDecl { extendMessage :: Posd Ident
+                             , extendFields :: [FieldDecl]
+                             }
 
 instance Pretty ExtendDecl where
   pretty (ExtendDecl nm fields) =
@@ -323,13 +338,16 @@ instance Pretty ExtendDecl where
 extensionMax :: NumLit
 extensionMax = NumLit Dec (2^(29::Int) - 1)
 
-data MessageDecl = MessageDecl (Posd Ident) [MessageField]
+data MessageDecl
+   = MessageDecl { messageName :: !(Posd Ident)
+                 , messageFields :: !([MessageField])
+                 }
 
 data MessageField
    = MessageField FieldDecl
    | MessageOption OptionDecl
    | OneOf (Posd Ident) [Field]
-   | Extensions (Posd NumLit) (Posd NumLit)
+   | Extensions SourcePos (Posd NumLit) (Posd NumLit)
    | LocalEnum    EnumDecl
    | LocalMessage MessageDecl
    | LocalExtend  ExtendDecl
@@ -347,7 +365,7 @@ instance Pretty MessageField where
     text "oneof" <+> pretty (val nm) <+> text "{" <$$>
     indent 2 (vcat (pretty <$> fields)) <$$>
     text "}"
-  pretty (Extensions l h) =
+  pretty (Extensions _ l h) =
     text "extensions" <+> pretty (val l) <+> text "to" <+> pretty (val h)
   pretty (LocalEnum d)   = pretty d
   pretty (LocalMessage d) = pretty d
@@ -374,13 +392,13 @@ instance Pretty ServiceField where
   pretty (ServiceRpcMethod m) = pretty m
 
 data RpcMethod = RpcMethod { rpcName :: (Posd Ident)
-                           , rpcInputs :: [FieldType]
-                           , rpcReturns :: [FieldType]
+                           , rpcInputs :: [Posd FieldType]
+                           , rpcReturns :: [Posd FieldType]
                            , rpcOptions :: [OptionDecl]
                            }
 
-ppTypeList :: [FieldType] -> Doc
-ppTypeList tps = parens (hsep (punctuate comma (pretty <$> tps)))
+ppTypeList :: [Posd FieldType] -> Doc
+ppTypeList tps = parens (hsep (punctuate comma (pretty.val <$> tps)))
 
 ppRpcOptions :: [OptionDecl] -> Doc
 ppRpcOptions [] = text ";"

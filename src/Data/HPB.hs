@@ -6,6 +6,7 @@ module Data.HPB (
     -- * Interface for message.
     FieldNumber
   , MessageRep
+  , HasMessageRep(..)
   , emptyMessageRep
   , Required(..)
   , FieldDef
@@ -51,6 +52,32 @@ module Data.HPB (
   , sfixed64RepeatedField
   , floatRepeatedField
   , doubleRepeatedField
+    -- * Re-exports
+  , Data.Int.Int32
+  , Data.Int.Int64
+  , Data.Word.Word32
+  , Data.Word.Word64
+  , Seq.Seq
+  , Data.Text.Text
+
+  , Data.Monoid.Monoid(..)
+  , (Data.Monoid.<>)
+  , Data.String.fromString
+
+  , (Control.Lens.&)
+  , Control.Lens.Simple
+  , Control.Lens.Lens
+  , Control.Lens.lens
+
+  , Prelude.Bool(..)
+  , Prelude.Eq
+  , Prelude.Enum(..)
+  , Prelude.Ord
+  , Prelude.error
+  , Prelude.show
+  , Prelude.undefined
+  , (Prelude.++)
+  , (Prelude..)
   ) where
 
 import Control.Applicative
@@ -72,6 +99,7 @@ import Data.Int
 import Data.Maybe
 import Data.Monoid
 import Data.Sequence as Seq
+import qualified Data.String
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
@@ -701,7 +729,9 @@ boolRepeatedField =
 
 enumRepeatedField :: (Eq x, Enum x)
                   => Text
-                  -> PackedStatus -> [x] -> RepeatedFieldDef a x
+                  -> PackedStatus
+                  -> [x]
+                  -> RepeatedFieldDef a x
 enumRepeatedField nm req legal =
   varintRepeatedField (varint32 . fromIntegral . fromEnum) (enumSetter legal) nm req
 
@@ -751,3 +781,6 @@ messageRepeatedField field_rep nm num fieldLens rep =
                . serializeMessage field_rep
         deserial = deserializeLengthDelimField rep nm
                      (appendTo fieldLens . deserializeMessage field_rep)
+
+class HasMessageRep tp where
+  messageRep :: MessageRep tp

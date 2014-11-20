@@ -77,7 +77,7 @@ importvis : { Private }
           | 'public' { Public }
 
 inline_option :: { OptionDecl }
-inline_option : option_name '=' val { OptionDecl $1 (val $3) }
+inline_option : option_name '=' val { OptionDecl $1 $3 }
 
 option_decl :: { OptionDecl }
 option_decl : 'option' inline_option ';' { $2 }
@@ -115,7 +115,7 @@ message_field
   : field_decl   { MessageField $1 }
   | option_decl  { MessageOption $1 }
   | 'oneof' ident '{' list(field) '}' { OneOf $2 $4 }
-  | 'extensions' num 'to' extension_upper ';' { Extensions $2 $4 }
+  | 'extensions' num 'to' extension_upper ';' { Extensions (pos $1) $2 $4 }
   | enum_decl    { LocalEnum $1 }
   | message_decl { LocalMessage $1 }
   | extend_decl  { LocalExtend $1 }
@@ -132,9 +132,10 @@ field_rule : 'required' { Required }
            | 'optional' { Optional }
            | 'repeated' { Repeated }
 
-field_type :: { FieldType }
-field_type : scalar        { ScalarFieldType  (val $1) }
-           | compound_name { MessageFieldType $1 }
+field_type :: { Posd FieldType }
+field_type : scalar        { ScalarFieldType `fmap` $1 }
+           | compound_name { Posd (NamedFieldType $1) (compoundNamePos $1) }
+           | '.' compound_name { Posd (GlobalNamedType $2) (pos $1) }
 
 options :: { [OptionDecl] }
 options : { [] }
@@ -154,7 +155,7 @@ rpc_method_decl
   : 'rpc' ident type_list1 'returns' type_list1 rpc_end
     { RpcMethod $2 $3 $5 $6 }
 
-type_list1 :: { [FieldType] }
+type_list1 :: { [Posd FieldType] }
 type_list1 : '(' comma_sep_list1(field_type) ')' { $2 }
 
 rpc_end :: { [OptionDecl] }
@@ -175,7 +176,6 @@ compound_name : compound_name_rev { CompoundName (reverse $1) }
 compound_name_rev :: { [Posd Ident] }
 compound_name_rev : ident { [$1] }
                   | compound_name_rev '.' ident { $3 : $1 }
-
 
 ident :: { Posd Ident }
 ident : ident_tkn { tknAsIdent `fmap` $1 }
