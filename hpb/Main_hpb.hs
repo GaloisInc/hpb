@@ -1,17 +1,22 @@
 module Main (main) where
 
+import Control.Applicative
 import Control.Exception
 import Control.Lens
 import Control.Monad
 import qualified Data.ByteString.Lazy as LazyBS
 import qualified Data.Foldable as Fold
+import Data.Maybe
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
+import qualified Data.Text as Text
 import Data.Version
 
 import System.Console.CmdArgs.Explicit
+import System.Directory
 import System.Environment
 import System.Exit
+import System.FilePath
 import System.IO
 import System.IO.Error
 import qualified Text.PrettyPrint.Leijen as PP
@@ -60,14 +65,16 @@ data Args
          , _protoFiles :: !(Seq FilePath)
          , _importDirs :: !(Seq FilePath)
          , _outDir     :: !(Maybe FilePath)
+         , _moduleName :: !(Maybe String)
          }
 
 -- | Initial arguments if nothing is specified.
 defaultArgs :: Args
-defaultArgs = Args { _argAction = GenerateCode
+defaultArgs = Args { _argAction  = GenerateCode
                    , _protoFiles = Seq.empty
                    , _importDirs = Seq.empty
-                   , _outDir = Nothing
+                   , _outDir     = Nothing
+                   , _moduleName = Nothing
                    }
 
 -- | Action to use for assigning.
@@ -85,6 +92,10 @@ importDirs = lens _importDirs (\a v -> a { _importDirs = v })
 -- | List of directories to use for searching for imports.
 outDir :: Simple Lens Args (Maybe FilePath)
 outDir = lens _outDir (\a v -> a { _outDir = v })
+
+-- | List of directories to use for searching for imports.
+moduleName :: Simple Lens Args (Maybe String)
+moduleName = lens _moduleName (\a v -> a { _moduleName = v })
 
 filenameArg :: Arg Args
 filenameArg = Arg { argValue = addFilename
@@ -109,12 +120,18 @@ outDirFlag = flagReq ["out", "O" ] upd "OUT_DIR" help
   where upd path a = Right (a & outDir .~ Just path)
         help = "Specify where to write generated files."
 
+moduleNameFlag :: Flag Args
+moduleNameFlag = flagReq ["module" ] upd "MODULE_NAME" help
+  where upd nm a = Right (a & moduleName .~ Just nm)
+        help = "Specify name of module to generate."
+
 arguments :: Mode Args
 arguments = mode "hpb" defaultArgs help filenameArg flags
   where help = hpbVersion
         flags = [ parseFlag
                 , importFlag
                 , outDirFlag
+                , moduleNameFlag
                 , flagHelpSimple (argAction .~ ShowHelp)
                 , flagVersion (argAction .~ ShowVersion)
                 ]
@@ -163,15 +180,27 @@ loadAndParseFile path = do
                   ++ show (PP.indent 2 (PP.text msg))
 
 
+getFileName :: FilePath -> ModuleName -> IO (FilePath,FilePath)
+getFileName dir0 (ModuleName l0)
+  | null l0 = fail "Unexpected empty module name."
+  | otherwise = do
+      let l = Text.unpack <$> l0
+      let dir = joinPath (dir0 : init l)
+      let f = last l
+      return (dir,f ++ ".hs")
+
 generateCode :: Args -> IO ()
 generateCode args = do
   when (Seq.null (args^.protoFiles)) $ do
     fail $ "Please provide a proto file as input."
   Fold.forM_ (args^.protoFiles) $ \path -> do
-    decls <- loadAndParseFile path
-    case resolvePackage path decls of
+    pkg <- loadAndParseFile path
+    case resolvePackage path (args^.moduleName) pkg of
       Left msg -> fail msg
-      Right pkg -> print (PP.pretty pkg)
+      Right mdl -> do
+        (dir,f) <- getFileName (fromMaybe "." (args^.outDir)) (haskellModuleName mdl)
+        createDirectoryIfMissing True dir
+        writeFile (dir </> f) (show (PP.pretty mdl))
 
 main :: IO ()
 main = do

@@ -162,7 +162,6 @@ rpc_end :: { [OptionDecl] }
 rpc_end : ';' { [] }
         | '{' list(option_decl) '}' { $2 }
 
-
 val :: { Posd Val }
 val : ident  { IdentVal `fmap` $1 }
     | num    { NumVal `fmap` $1 }
@@ -179,6 +178,7 @@ compound_name_rev : ident { [$1] }
 
 ident :: { Posd Ident }
 ident : ident_tkn { tknAsIdent `fmap` $1 }
+      | 'message' { tknAsIdent `fmap` $1 }
 
 num :: { Posd NumLit }
 num : num_tkn { tknAsNum `fmap` $1 }
@@ -229,6 +229,7 @@ tknAsIdent :: Token -> Ident
 tknAsIdent tkn =
   case tkn of
     TIdent t -> t
+    TKeyword t -> Ident t
     _ -> error $ "internal: Token is not an identifier."
 
 tknAsNum :: Token -> NumLit
@@ -254,5 +255,4 @@ tknAsCustomOption tkn =
   case tkn of
     TCustomOption x -> x
     _ -> error $ "internal: Token is not a scalar type."
-
 }

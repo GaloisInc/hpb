@@ -1,9 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards #-}
 module Data.HPB.Resolver
-  ( Package
-  , Message
-  , A.CompoundName
+  ( Package(..)
+  , ModuleName(..)
   , resolvePackage
   ) where
 
@@ -18,8 +17,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -30,7 +27,6 @@ import Text.PrettyPrint.Leijen as PP hiding ((<$>))
 
 import Data.HPB.AST (Ident)
 import qualified Data.HPB.AST as A
-import qualified Data.HPB.Parser as P
 
 ppText :: Text -> Doc
 ppText t = text (Text.unpack t)
@@ -46,6 +42,10 @@ failAt p msg = fail $ show $
   pretty p <> text ":" <$$>
   indent 2 (text msg)
 
+vcatPrefix1 :: Doc -> Doc -> [Doc] -> Doc
+vcatPrefix1 _ _ [] = PP.empty
+vcatPrefix1 ph pr (h:r) = hcat ((ph <> h <> line) : fmap (\v -> pr <> v <> line) r)
+
 ------------------------------------------------------------------------
 -- Value utilities
 
@@ -55,11 +55,13 @@ asBoolVal msg (A.Posd v p) =
     A.BoolVal b -> return b
     _ -> failAt p msg
 
+{-
 asStringVal :: Monad m => String -> A.Posd A.Val -> m Text
 asStringVal msg (A.Posd v p) =
   case v of
     A.StringVal s -> return (A.stringText s)
     _ -> failAt p msg
+-}
 
 ------------------------------------------------------------------------
 -- ModuleName
@@ -109,22 +111,17 @@ isConId :: String -> Bool
 isConId "" = False
 isConId (c:r) = isUpper c && all isIdentChar r
 
-moduleNameFromString :: Monad m => A.SourcePos -> String -> m ModuleName
-moduleNameFromString p s0 = go [] s0
+moduleNameFromString :: Monad m => String -> m ModuleName
+moduleNameFromString s0 = go [] s0
   where go r s = do
           case break (== '.') s of
-            (c, _) | not (isConId c) -> failAt p $ "Invalid module name: " ++ s0
+            (c, _) | not (isConId c) -> fail $ "Invalid module name: " ++ s0
             (c, '.':next) -> go (fromString c:r) next
             (c, "") -> return $ ModuleName $ reverse $ fromString c:r
-            (c, _) -> error $ "internal: moduleNameFromString " ++ s0
+            (_, _) -> error $ "internal: moduleNameFromString " ++ s0
 
 ------------------------------------------------------------------------
 -- Uncategorized
-
-type PackageName = A.CompoundName
-
-
-type HaskellModuleName = Text
 
 data FileDef
    = EnumDef EnumInfo
@@ -133,21 +130,6 @@ data FileDef
 fileDefIdent :: FileDef -> Ident
 fileDefIdent (EnumDef e) = enumIdent e
 fileDefIdent (MessageDef m) = messageName m
-
-type FullyQualifiedMessageName = A.CompoundName
-
-data Message = Message { messageCtor :: !Text
-                       }
-
-ppCompoundName :: A.CompoundName -> Doc
-ppCompoundName (A.CompoundName l) =
-  case toUpperFirstName (Text.unpack (Text.intercalate "_" (A.identText . A.val <$> l))) of
-    Nothing -> error "Cannot print compoundName"
-    Just t -> ppText t
-
-vcatPrefix1 :: Doc -> Doc -> [Doc] -> Doc
-vcatPrefix1 _ _ [] = PP.empty
-vcatPrefix1 ph pr (h:r) = hcat ((ph <> h <> line) : fmap (\v -> pr <> v <> line) r)
 
 ------------------------------------------------------------------------
 -- EnumInfo
@@ -205,9 +187,9 @@ enumLegalValues e = brackets (hcat (punctuate s (ppText <$> l)))
 ppToEnumBindings :: EnumInfo -> Doc
 ppToEnumBindings e = vcat (bindings ++ [end])
   where bindings = ppToEnumBinding <$> Map.toList (e^.enumValueMap)
-        end = text "toEnum v = error (\""
+        end = text "toEnum v = HPB.error (\""
               <> enumHaskellType e
-              <+> text "given illegal value \" ++ show v ++ \".\")"
+              <+> text "given illegal value \" HPB.++ HPB.show v HPB.++ \".\")"
 
 ppToEnumBinding :: (Word32, [Ident]) -> Doc
 ppToEnumBinding (_,[]) = PP.empty
@@ -220,9 +202,9 @@ ppEnumInfo :: EnumInfo -> Doc
 ppEnumInfo e =
   text "data" <+> enumHaskellType e <$$>
   indent 3 (vcatPrefix1 (text "= ") (text "| ") (pretty <$> Map.keys (e^.enumCtors))) <>
-  text "deriving (Eq, Ord)" <$$>
+  text "deriving (HPB.Eq, HPB.Ord)" <$$>
   text "" <$$>
-  text "instance Enum" <+> enumHaskellType e <+> text "where" <$$>
+  text "instance HPB.Enum" <+> enumHaskellType e <+> text "where" <$$>
   indent 2 (ppToEnumBindings e) <$$>
   indent 2 (vcat (ppFromEnumBinding <$> Map.toList (e^.enumCtors))) <$$>
   text ""
@@ -260,12 +242,11 @@ extractEnumFieldInfo (A.EnumValue (A.Posd nm p) v) = do
         Just t -> enumValues %= (Seq.|> Text.pack t)
   enumValueMap %= Map.insertWith (++) w [nm]
 
-
 ------------------------------------------------------------------------
--- MessageInfo
+-- FieldInfo
 
 data FieldInfo = FieldInfo { fieldPos :: !A.SourcePos
-                           , fieldName :: !Ident
+                           , fieldIdent :: !Ident
                            , fieldTag  :: !A.NumLit
                            , fieldRule :: !A.FieldRule
                            , fieldType :: !(A.Posd A.FieldType)
@@ -279,11 +260,24 @@ fieldDefault = lens _fieldDefault (\s v -> s { _fieldDefault = v })
 fieldIsPacked :: Simple Lens FieldInfo Bool
 fieldIsPacked = lens _fieldIsPacked (\s v -> s { _fieldIsPacked = v })
 
+-- | Get name of lens associated with field.
+fieldLensName :: String -> FieldInfo -> String
+fieldLensName prefix f =
+    case toLowerFirstName snm of
+      Nothing -> error "Could not interpret field name as lens."
+      Just s -> prefix ++ "_" ++ s
+  where nm = show (fieldIdent f)
+        snm = case fieldRule f of
+                A.Repeated -> nm ++ "s"
+                _ -> nm
+
+------------------------------------------------------------------------
+-- MessageInfo
+
 type MessageFieldWriter = StateT FieldInfo (ErrorT String Identity)
 
-
 extractMessageFieldOptions :: A.OptionDecl -> MessageFieldWriter ()
-extractMessageFieldOptions (A.OptionDecl (A.Posd nm p) v) = do
+extractMessageFieldOptions (A.OptionDecl (A.Posd nm _) v) = do
   case nm of
     A.KnownName "default" -> fieldDefault .= Just v
     A.KnownName "packed" -> do
@@ -298,24 +292,29 @@ data MessageInfo = MessageInfo { messageName :: Ident
 messageFields :: Simple Lens MessageInfo (Seq FieldInfo)
 messageFields = lens _messageFields (\s v -> s { _messageFields = v })
 
+messageLowerPrefix :: MessageInfo -> String
+messageLowerPrefix m =
+  case toLowerFirstName (show (messageName m)) of
+    Just s -> s
+    Nothing -> error "Could not interpret message name as a Haskell identifier."
+
 type MessageWriter = StateT MessageInfo (ErrorT String Identity)
 
 extractMessageField :: A.MessageField -> MessageWriter ()
 extractMessageField mf =
   case mf of
     A.MessageField (A.FieldDecl rl f) -> do
-      let opts = A.fieldOptions f
       let f0 = FieldInfo { fieldPos = A.pos (A.fieldName f)
-                         , fieldName = A.val (A.fieldName f)
+                         , fieldIdent = A.val (A.fieldName f)
                          , fieldTag = A.val (A.fieldTag f)
                          , fieldRule = rl
                          , fieldType = A.fieldType f
                          , _fieldDefault = Nothing
                          , _fieldIsPacked = False
                          }
-      f <- lift $ flip execStateT f0 $ do
-             mapM_ extractMessageFieldOptions (A.fieldOptions f)
-      messageFields %= (Seq.|> f)
+      fi <- lift $ flip execStateT f0 $ do
+              mapM_ extractMessageFieldOptions (A.fieldOptions f)
+      messageFields %= (Seq.|> fi)
     A.MessageOption _ -> do
       return ()
     A.OneOf nm _ -> do
@@ -332,14 +331,9 @@ extractMessageField mf =
 ------------------------------------------------------------------------
 -- FileContext
 
-data FileContext = FCtx { _fcModuleName :: !(Maybe ModuleName)
-                        , _fcIdentMap   :: !(Map Ident A.SourcePos)
+data FileContext = FCtx { _fcIdentMap   :: !(Map Ident A.SourcePos)
                         , _fcDefs       :: !(Seq FileDef)
                         }
-
--- | Return module name associated with file.
-fcModuleName :: Simple Lens FileContext (Maybe ModuleName)
-fcModuleName = lens _fcModuleName (\s v -> s { _fcModuleName = v })
 
 fcIdentMap :: Simple Lens FileContext (Map Ident A.SourcePos)
 fcIdentMap = lens _fcIdentMap (\s v -> s { _fcIdentMap = v })
@@ -348,21 +342,12 @@ fcDefs :: Simple Lens FileContext (Seq FileDef)
 fcDefs = lens _fcDefs (\s v -> s { _fcDefs = v })
 
 emptyFileContext :: FileContext
-emptyFileContext  =
-  FCtx { _fcModuleName = Nothing
-       , _fcIdentMap = Map.empty
+emptyFileContext =
+  FCtx { _fcIdentMap = Map.empty
        , _fcDefs     = Seq.empty
        }
 
 type FileWriter = StateT FileContext (ErrorT String Identity)
-
-extractFileOption :: A.SourcePos -> A.OptionName -> A.Posd A.Val -> FileWriter ()
-extractFileOption p (A.KnownName "haskell_module") v = do
-  txt <- asStringVal "haskell_module name must be a string." v
-  nm <- moduleNameFromString p (Text.unpack txt)
-  fcModuleName .= Just nm
-extractFileOption _ _ _ =
-  return ()
 
 reserveName :: A.SourcePos -> Ident -> FileWriter ()
 reserveName p nm = do
@@ -381,7 +366,7 @@ extractFileEnum d = do
   when (Map.null (e^.enumCtors)) $ do
     failAt p $ show nm ++ " must contain at least one value."
   when (e^.enumAllowAlias /= Just True) $ do
-    let isDup (nm, l) = length l > 1
+    let isDup (_nm, l) = length l > 1
     case filter isDup $ Map.toList (e^.enumValueMap) of
       [] -> return ()
       _ -> fail $ show nm ++ " contains aliases, but allow_alias is not set."
@@ -402,22 +387,12 @@ extractFileDecl decl = do
   case decl of
     A.Import _ _ -> do
       fail "hdb does not yet support imports."
-    A.Option (A.OptionDecl (A.Posd nm p) v) ->
-      extractFileOption p nm v
+    A.Option (A.OptionDecl (A.Posd _ _) _) ->
+      return ()
     A.Enum d     -> extractFileEnum d
     A.Message d  -> extractMessage d
     A.Extend _   -> fail "hdb does not yet support message extensions."
     A.Service _  -> fail "hdb does not yet support service declarations."
-
-mkFileContext :: A.Package -> ErrorT String Identity FileContext
-mkFileContext (A.Package pkg_nm decls) = execStateT go emptyFileContext
-  where go = do
-          mapM_ extractFileDecl decls
-          -- Assign module name if not defined.
-          mdef <- use fcModuleName
-          case mdef of
-            Just{} -> return ()
-            Nothing -> fcModuleName .= (moduleNameFromPackageName =<< pkg_nm)
 
 ------------------------------------------------------------------------
 -- TypeContext
@@ -445,7 +420,7 @@ resolveIdentType :: Monad m
                  => Map Ident FileDef
                  -> A.CompoundName
                  -> m FileDef
-resolveIdentType m0 cnm@(A.CompoundName l) = go m0 l
+resolveIdentType m0 cnm@(A.CompoundName l0) = go m0 l0
   where go _ [] = error $ "internal: Could not resolve " ++ show (pretty cnm) ++ "."
         go m (nm:l) = do
           d <- go1 m nm
@@ -474,8 +449,9 @@ mkTypeContext ctx =
                 }
   where defs = Fold.toList (ctx^.fcDefs)
         typeMap = Map.fromList [ (fileDefIdent d, d) | d <- defs ]
+        enums = [ e | EnumDef e <- defs ]
         enumMap = Map.fromList [ (A.Ident t, t)
-                               | EnumDef e <- defs
+                               | e <- enums
                                , t <- Fold.toList (e^.enumValues)
                                ]
 
@@ -489,11 +465,14 @@ data ResolvedVal
    | StringVal A.StringLit
    | BoolVal Bool
 
-instance Pretty ResolvedVal where
-  pretty (NumVal x) = pretty x
-  pretty (EnumCtor x) = ppText x
-  pretty (StringVal (A.StringLit s)) = text "fromString" <+> text (show s)
-  pretty (BoolVal b) = text (show b)
+ppResolvedVal :: Int -> ResolvedVal -> Doc
+ppResolvedVal prec rv =
+  case rv of
+    NumVal x -> pretty x
+    EnumCtor x -> ppText x
+    StringVal (A.StringLit s) ->
+      parensIf (prec >= 10) $ text "HPB.fromString" <+> text (show s)
+    BoolVal b ->  text (show b)
 
 resolveValue :: (Functor m, Monad m) => TypeContext -> A.Posd A.Val -> m ResolvedVal
 resolveValue ctx (A.Posd v p) =
@@ -514,7 +493,7 @@ data ResolvedType
    | EnumType EnumInfo
 
 ppFieldType :: ResolvedType -> Doc
-ppFieldType (ScalarType tp) = text $
+ppFieldType (ScalarType tp) = text $ ("HPB." ++) $
   case tp of
     A.DoubleType   -> "Double"
     A.FloatType    -> "Float"
@@ -534,11 +513,11 @@ ppFieldType (ScalarType tp) = text $
 ppFieldType (MessageType nm) = ppText nm
 ppFieldType (EnumType e) = pretty (enumIdent e)
 
-ppResolvedTypeDefault :: ResolvedType -> Doc
-ppResolvedTypeDefault rtp =
+ppResolvedTypeDefault :: Int -> ResolvedType -> Doc
+ppResolvedTypeDefault prec rtp =
   case rtp of
-    ScalarType tp -> ppScalarDefault 0 tp
-    MessageType _ -> text "mempty"
+    ScalarType tp -> ppScalarDefault prec tp
+    MessageType _ -> text "HPB.mempty"
     EnumType e -> case Seq.viewl (e^.enumValues) of
                     Seq.EmptyL -> error "illegal: Enumerator constains no elements."
                     h Seq.:< _ -> ppText h
@@ -566,6 +545,8 @@ resolveFieldType ctx (A.Posd (A.GlobalNamedType tp) _p) =
 -- ResolvedFieldInfo
 
 data ResolvedFieldInfo = RFI { rfiIdent :: !Ident
+                               -- | Name of lens for field as a string.
+                             , rfiLensName :: !String
                              , rfiRule :: !A.FieldRule
                              , rfiType :: !ResolvedType
                              , rfiTag  :: !A.NumLit
@@ -573,16 +554,19 @@ data ResolvedFieldInfo = RFI { rfiIdent :: !Ident
                              , rfiIsPacked :: !Bool
                              }
 
-
 resolveFieldInfo :: (Functor m, Monad m)
                  => TypeContext
+                 -> String
+                    -- ^ Prefix if field identifier has already been used.
                  -> FieldInfo
                  -> m ResolvedFieldInfo
-resolveFieldInfo ctx f = do
+resolveFieldInfo ctx prefix f = do
   -- TODO: Check name is a lens name.
   tp <- resolveFieldType ctx (fieldType f)
   rv <- T.mapM (resolveValue ctx) (f^.fieldDefault)
-  return RFI { rfiIdent = fieldName f
+  let lens_nm = fieldLensName prefix f
+  return RFI { rfiIdent = fieldIdent f
+             , rfiLensName = lens_nm
              , rfiRule = fieldRule f
              , rfiType = tp
              , rfiTag  = fieldTag f
@@ -590,28 +574,13 @@ resolveFieldInfo ctx f = do
              , rfiIsPacked = f^.fieldIsPacked
              }
 
--- | Return name of field as a stirng.
-rfiStringName :: ResolvedFieldInfo -> String
-rfiStringName f =
-    case rfiRule f of
-      A.Repeated -> nm ++ "s"
-      _ -> nm
-  where nm = show (rfiIdent f)
-
--- | Get name of lens associated with field.
-rfiLensName :: ResolvedFieldInfo -> Doc
-rfiLensName f =
-  case toLowerFirstName (rfiStringName f) of
-    Nothing -> error "Could not interpret field name as lens."
-    Just s -> text s
-
 rfiRecordFieldName :: ResolvedFieldInfo -> Doc
-rfiRecordFieldName f = text "_" <> rfiLensName f
+rfiRecordFieldName f = text ('_' : rfiLensName f)
 
 ppRfiType :: Int -> ResolvedFieldInfo -> Doc
 ppRfiType prec f =
   case rfiRule f of
-    A.Repeated -> parensIf (prec >= 10) (text "Seq" <+> ppFieldType (rfiType f))
+    A.Repeated -> parensIf (prec >= 10) (text "HPB.Seq" <+> ppFieldType (rfiType f))
     _ -> ppFieldType (rfiType f)
 
 parensIf :: Bool -> Doc -> Doc
@@ -622,20 +591,23 @@ ppFieldDecl :: ResolvedFieldInfo -> Doc
 ppFieldDecl f = rfiRecordFieldName f <+> text "::" <+> ppRfiType 0 f
 
 -- | Print the default value to initialzie a field with.
-ppFieldDefault :: ResolvedFieldInfo -> Doc
-ppFieldDefault f | Just v <- rfiDefault f = pretty v
-                 | otherwise = ppResolvedTypeDefault (rfiType f)
+ppFieldDefault :: Int -> ResolvedFieldInfo -> Doc
+ppFieldDefault prec f =
+  case rfiRule f of
+    A.Repeated -> text "HPB.mempty"
+    _ | Just v <- rfiDefault f -> ppResolvedVal prec v
+      | otherwise -> ppResolvedTypeDefault prec (rfiType f)
 
 ppFieldInit :: ResolvedFieldInfo -> Doc
 ppFieldInit rfi =
-   rfiRecordFieldName rfi <+> text "=" <+> ppFieldDefault rfi
+   rfiRecordFieldName rfi <+> text "=" <+> ppFieldDefault 0 rfi
 
 ppFieldLens :: Doc -> ResolvedFieldInfo -> Doc
 ppFieldLens messageType f =
-    l_nm <+> text ":: Simple Lens" <+> messageType <+> ppRfiType 10 f <$$>
-    l_nm <+> text "= lens" <+> rec_nm <+> setter <$$>
+    l_nm <+> text ":: HPB.Simple HPB.Lens" <+> messageType <+> ppRfiType 10 f <$$>
+    l_nm <+> text "= HPB.lens" <+> rec_nm <+> setter <$$>
     line
- where l_nm = rfiLensName f
+ where l_nm = text (rfiLensName f)
        rec_nm = rfiRecordFieldName f
        setter = text "(\\s v -> s {" <+> rec_nm <+> text "= v })"
 
@@ -643,59 +615,60 @@ ppFieldAppend :: String -> String -> ResolvedFieldInfo -> Doc
 ppFieldAppend x y f = rfiRecordFieldName f <+> text "=" <+> rhs
   where rhs | shouldMergeFields f =
               rfiRecordFieldName f <+> text x
-                <+> text "<>"
+                <+> text "HPB.<>"
                 <+> rfiRecordFieldName f <+> text y
             | otherwise = rfiRecordFieldName f <+> text y
 
-
-
 ppFieldDef :: ResolvedFieldInfo -> Doc
 ppFieldDef f = do
-  let f_nm = parens (text "fromString" <+> text (show (show (rfiIdent f))))
-  let packed = text (if rfiIsPacked f then "Packed" else "Unpacked")
+  let f_nm = parens (text "HPB.fromString" <+> text (show (show (rfiIdent f))))
+  let packed = text (if rfiIsPacked f then "HPB.Packed" else "HPB.Unpacked")
   let tag = text (show (rfiTag f))
   let req = case rfiRule f of
-              A.Required -> text "Req"
-              A.Optional -> parens (text "Opt" <+> ppFieldDefault f)
+              A.Required -> text "HPB.Req"
+              A.Optional -> parens (text "HPB.Opt" <+> ppFieldDefault 10 f)
               _ -> error "internal: Default value not used in repeated fields."
-  let lens_nm = rfiLensName f
+  let lens_nm = text (rfiLensName f)
   case rfiType f of
     ScalarType tp -> do
-      let pre = case tp of
-                  A.DoubleType   -> "double"
-                  A.FloatType    -> "float"
-                  A.Int32Type    -> "int32"
-                  A.Int64Type    -> "int64"
-                  A.Uint32Type   -> "uint32"
-                  A.Uint64Type   -> "uint64"
-                  A.Sint32Type   -> "sint32"
-                  A.Sint64Type   -> "sint64"
-                  A.Fixed32Type  -> "fixed32"
-                  A.Fixed64Type  -> "fixed64"
-                  A.Sfixed32Type -> "sfixed32"
-                  A.Sfixed64Type -> "sfixed64"
-                  A.BoolType     -> "bool"
-                  A.StringType   -> "string"
-                  A.BytesType    -> "bytes"
+      let prefix =
+            case tp of
+              A.DoubleType   -> "double"
+              A.FloatType    -> "float"
+              A.Int32Type    -> "int32"
+              A.Int64Type    -> "int64"
+              A.Uint32Type   -> "uint32"
+              A.Uint64Type   -> "uint64"
+              A.Sint32Type   -> "sint32"
+              A.Sint64Type   -> "sint64"
+              A.Fixed32Type  -> "fixed32"
+              A.Fixed64Type  -> "fixed64"
+              A.Sfixed32Type -> "sfixed32"
+              A.Sfixed64Type -> "sfixed64"
+              A.BoolType     -> "bool"
+              A.StringType   -> "string"
+              A.BytesType    -> "bytes"
       let showPacked
             | (tp == A.StringType) || (tp == A.BytesType) = text ""
             | otherwise = text " " <> packed
       case rfiRule f of
         A.Repeated ->
-           text (pre ++ "RepeatedField") <+> f_nm <> showPacked <+> tag <+> lens_nm
-        _ -> text (pre ++ "Field") <+> f_nm <+> req <+> tag <+> lens_nm
-    MessageType nm -> do
+           text ("HPB." ++ prefix ++ "RepeatedField") <+> f_nm <> showPacked <+> tag <+> lens_nm
+        _ -> text ("HPB." ++ prefix ++ "Field") <+> f_nm <+> req <+> tag <+> lens_nm
+    MessageType _ -> do
       case rfiRule f of
-        A.Required -> text "messageField messageRep" <+> f_nm <+> text "True"  <+> tag <+> lens_nm
-        A.Optional -> text "messageField messageRep" <+> f_nm <+> text "False" <+> tag <+> lens_nm
-        A.Repeated -> text "messageRepeatedField messageRep" <+> f_nm <+> tag <+> lens_nm
+        A.Required ->
+          text "HPB.messageField HPB.messageRep" <+> f_nm <+> text "HPB.True"  <+> tag <+> lens_nm
+        A.Optional ->
+          text "HPB.messageField HPB.messageRep" <+> f_nm <+> text "HPB.False" <+> tag <+> lens_nm
+        A.Repeated ->
+          text "HPB.messageRepeatedField HPB.messageRep" <+> f_nm <+> tag <+> lens_nm
     EnumType e -> do
       let vals = enumLegalValues e
       case rfiRule f of
-        A.Repeated -> text "enumRepeatedField" <+> f_nm <+> packed <+> vals <+> tag <+> lens_nm
-        _ -> text "enumField" <+> f_nm <+> req <+> vals <+> tag <+> lens_nm
-
-
+        A.Repeated ->
+          text "HPB.enumRepeatedField" <+> f_nm <+> packed <+> vals <+> tag <+> lens_nm
+        _ -> text "HPB.enumField" <+> f_nm <+> req <+> vals <+> tag <+> lens_nm
 
 shouldMergeFields :: ResolvedFieldInfo -> Bool
 shouldMergeFields f
@@ -713,7 +686,8 @@ data ResolvedMessage
 
 resolveMessage :: (Functor m, Monad m) => TypeContext -> MessageInfo -> m ResolvedMessage
 resolveMessage ctx m = do
-  fields <- mapM (resolveFieldInfo ctx) (Fold.toList (m^.messageFields))
+  let msg_nm = messageLowerPrefix m
+  fields <- mapM (resolveFieldInfo ctx msg_nm) (Fold.toList (m^.messageFields))
   return RM { rmName = messageName m
             , rmFields = fields
             }
@@ -725,7 +699,7 @@ ppResolvedMessage m =
     indent 3 (vcatPrefix1 (text "  ") (text ", ") (ppFieldDecl <$> fields)) <>
     text "}" <$$>
     text "" <$$>
-    text "instance Monoid" <+> pretty nm <+> text "where" <$$>
+    text "instance HPB.Monoid" <+> pretty nm <+> text "where" <$$>
     text "  mempty =" <+> pretty nm <+> text "{" <$$>
     indent 12 (vcatPrefix1 (text "  ") (text ", ") (ppFieldInit <$> fields)) <>
     text "}" <$$>
@@ -734,10 +708,10 @@ ppResolvedMessage m =
     text "}" <$$>
     text "" <$$>
     hcat (ppFieldLens (pretty nm) <$> fields) <>
-    text "instance HasMessageRep" <+> pretty nm <+> text "where" <$$>
+    text "instance HPB.HasMessageRep" <+> pretty nm <+> text "where" <$$>
     text "  messageRep" <$$>
-    text "    = emptyMessageRep (fromString" <+> nm_as_string <> text ")" <$$>
-    indent 4 (vcat ((\f -> text "&" <+> ppFieldDef f) <$> fields)) <$$>
+    text "    = HPB.emptyMessageRep (HPB.fromString" <+> nm_as_string <> text ")" <$$>
+    indent 4 (vcat ((\f -> text "HPB.&" <+> ppFieldDef f) <$> fields)) <$$>
     text ""
   where nm = rmName m
         fields = rmFields m
@@ -758,9 +732,9 @@ ppScalarDefault prec tp =
     A.Fixed64Type  -> text "0"
     A.Sfixed32Type -> text "0"
     A.Sfixed64Type -> text "0"
-    A.BoolType     -> text "False"
-    A.StringType   -> parensIf (prec >= 10) (text "fromString \"\"")
-    A.BytesType    -> text "mempty"
+    A.BoolType     -> text "HPB.False"
+    A.StringType   -> parensIf (prec >= 10) (text "HPB.fromString \"\"")
+    A.BytesType    -> text "HPB.mempty"
 
 ------------------------------------------------------------------------
 -- ResolvedDef
@@ -788,15 +762,21 @@ data Package = Package { haskellModuleName :: !ModuleName
 instance Pretty Package where
   pretty pkg =
     text "module" <+> pretty (haskellModuleName pkg) <+> text "where" <$$>
-    text "import Data.HPB" <$$>
+    text "import qualified Data.HPB as HPB" <$$>
     text "import Prelude ()" <$$>
     text "" <$$>
     vcat (pretty <$> moduleDefs pkg)
 
-resolvePackage :: FilePath -> A.Package -> Either String Package
-resolvePackage path pkg = runIdentity $ runErrorT $ do
-  ctx <- mkFileContext pkg
-  let nm = fromMaybe (moduleNameFromPath path) (ctx^.fcModuleName)
+resolvePackage :: FilePath -> Maybe String -> A.Package -> Either String Package
+resolvePackage path mnm (A.Package pkg_nm decls) = runIdentity $ runErrorT $ do
+  ctx <-
+    flip execStateT emptyFileContext $ do
+      mapM_ extractFileDecl decls
+  let default_nm = fromMaybe (moduleNameFromPath path)
+                             (moduleNameFromPackageName =<< pkg_nm)
+  nm <- case mnm of
+          Just nm -> moduleNameFromString nm
+          Nothing -> return default_nm
   let tpCtx = mkTypeContext ctx
   defs <- mapM (resolveFileDef tpCtx) (Fold.toList (ctx^.fcDefs))
   return Package { haskellModuleName = nm

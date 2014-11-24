@@ -9,6 +9,7 @@ module Data.HPB (
   , HasMessageRep(..)
   , emptyMessageRep
   , Required(..)
+  , PackedStatus(..)
   , FieldDef
   , serializeMessage
   , deserializeMessage

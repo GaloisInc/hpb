@@ -36,6 +36,7 @@ executable hpb
     bytestring,
     cmdargs,
     containers,
+    directory,
     filepath,
     lens,
     mtl,
