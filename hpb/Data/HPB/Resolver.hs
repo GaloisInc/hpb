@@ -472,7 +472,8 @@ ppResolvedVal prec rv =
     EnumCtor x -> ppText x
     StringVal (A.StringLit s) ->
       parensIf (prec >= 10) $ text "HPB.fromString" <+> text (show s)
-    BoolVal b ->  text (show b)
+    BoolVal True  ->  text "HPB.True"
+    BoolVal False ->  text "HPB.False"
 
 resolveValue :: (Functor m, Monad m) => TypeContext -> A.Posd A.Val -> m ResolvedVal
 resolveValue ctx (A.Posd v p) =
@@ -761,6 +762,7 @@ data Package = Package { haskellModuleName :: !ModuleName
 
 instance Pretty Package where
   pretty pkg =
+    text "{-# OPTIONS_GHC -fno-warn-unused-matches #-}" <$$>
     text "module" <+> pretty (haskellModuleName pkg) <+> text "where" <$$>
     text "import qualified Data.HPB as HPB" <$$>
     text "import Prelude ()" <$$>

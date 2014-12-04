@@ -60,6 +60,7 @@ module Data.HPB (
   , Data.Word.Word64
   , Seq.Seq
   , Data.Text.Text
+  , B.ByteString
 
   , Data.Monoid.Monoid(..)
   , (Data.Monoid.<>)
