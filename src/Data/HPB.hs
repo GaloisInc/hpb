@@ -12,7 +12,10 @@ module Data.HPB (
   , PackedStatus(..)
   , FieldDef
   , serializeMessage
+  , serializeMessage'
   , deserializeMessage
+  , deserializeMessage'
+  , readDelimitedFromHandle
     -- * Field definitions
   , int32Field
   , int64Field
@@ -75,6 +78,7 @@ module Data.HPB (
   , Prelude.Eq
   , Prelude.Enum(..)
   , Prelude.Ord
+  , Prelude.Show
   , Prelude.error
   , Prelude.show
   , Prelude.undefined
@@ -107,6 +111,8 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified Data.Vector as V
 import Data.Word
+import Foreign
+import System.IO
 
 ------------------------------------------------------------------------
 -- WireType
@@ -178,13 +184,25 @@ type FieldNumber = Word32
 type ReadFn a = B.ByteString -> (a, B.ByteString)
 
 readVarint :: ReadFn Word64
-readVarint = go 0 0
-  where go sh old s0 =
+readVarint = runState (readVarint' nextByteInByteString)
+
+nextByteInByteString :: State B.ByteString Word8
+nextByteInByteString = state f
+  where f s0 =
           case B.uncons s0 of
             Nothing -> error "Expected varint before end of buffer."
-            Just (w, s) | (w .&. 0x80) /= 0 -> go (sh + 7) new_val s
-                        | otherwise  -> (new_val, s)
-              where new_val = old .|. (fromIntegral (w .&. 0x7f) `shiftL` sh)
+            Just (w, s) -> (w, s)
+
+{-# INLINE readVarint' #-}
+readVarint' :: Monad m => m Word8 -> m Word64
+readVarint' = go 0 0
+  where go sh old f = do
+          w <- f
+          let new_val = old .|. (fromIntegral (w .&. 0x7f) `shiftL` sh)
+          if (w .&. 0x80) /= 0 then
+            go (sh + 7) new_val f
+          else
+            return new_val
 
 readUntilEnd :: ReadFn a
              -> B.ByteString
@@ -268,11 +286,23 @@ newtype FieldDeserializer a
                -> GetST s a
         }
 
+deserializeMessage :: HasMessageRep a => B.ByteString -> a
+deserializeMessage = deserializeMessage' messageRep
 
-deserializeMessage :: MessageRep a -> B.ByteString -> a
-deserializeMessage rep s = runST $ do
+deserializeMessage' :: MessageRep a -> B.ByteString -> a
+deserializeMessage' rep s = runST $ do
   seenFields <- H.new
   evalStateT (populateMessage seenFields rep (initMessage rep)) s
+
+readDelimitedFromHandle :: HasMessageRep a => Handle -> IO a
+readDelimitedFromHandle h = do
+  len <- alloca $ \p -> do
+    readVarint' $ do
+      read_cnt <- hGetBuf h p 1
+      when (read_cnt /= 1) $ fail "Could not read next byte."
+      peek p
+  bs <- B.hGet h (fromIntegral len)
+  return $ deserializeMessage bs
 
 readFixedField :: Int -> ReadFn B.ByteString
 readFixedField n s
@@ -331,8 +361,11 @@ populateMessage seenFields rep msg = do
             populateMessage seenFields rep msg
           _ -> fail $ "Unsupported field type " ++ show tp ++ " before end of message."
 
-serializeMessage :: MessageRep a -> a -> Builder
-serializeMessage rep x = V.foldr (\f s -> f x <> s) mempty (fieldSerializers rep)
+serializeMessage :: HasMessageRep a => a -> Builder
+serializeMessage = serializeMessage' messageRep
+
+serializeMessage' :: MessageRep a -> a -> Builder
+serializeMessage' rep x = V.foldr (\f s -> f x <> s) mempty (fieldSerializers rep)
 
 emptyMessageRep :: Monoid a => Text -> MessageRep a
 emptyMessageRep nm =
@@ -593,9 +626,9 @@ messageField field_rep nm req num fieldLens rep =
         & insDeserializer num (if req then recordFieldNum num deserial else deserial)
         & (if req then insRequired num nm else id)
   where serial = encodeLengthDelimField num
-               . serializeMessage field_rep
+               . serializeMessage' field_rep
         deserial = deserializeLengthDelimField rep nm
-                     (setTo fieldLens . deserializeMessage field_rep)
+                     (setTo fieldLens . deserializeMessage' field_rep)
 
 -- | This is the type for functions used to add fields to the
 -- message representation.
@@ -780,9 +813,9 @@ messageRepeatedField field_rep nm num fieldLens rep =
     rep & insSerializer fieldLens (Fold.fold . fmap serial)
         & insDeserializer num deserial
   where serial = encodeLengthDelimField num
-               . serializeMessage field_rep
+               . serializeMessage' field_rep
         deserial = deserializeLengthDelimField rep nm
-                     (appendTo fieldLens . deserializeMessage field_rep)
+                     (appendTo fieldLens . deserializeMessage' field_rep)
 
 class HasMessageRep tp where
   messageRep :: MessageRep tp

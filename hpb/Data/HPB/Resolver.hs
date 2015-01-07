@@ -55,14 +55,6 @@ asBoolVal msg (A.Posd v p) =
     A.BoolVal b -> return b
     _ -> failAt p msg
 
-{-
-asStringVal :: Monad m => String -> A.Posd A.Val -> m Text
-asStringVal msg (A.Posd v p) =
-  case v of
-    A.StringVal s -> return (A.stringText s)
-    _ -> failAt p msg
--}
-
 ------------------------------------------------------------------------
 -- ModuleName
 
@@ -202,7 +194,7 @@ ppEnumInfo :: EnumInfo -> Doc
 ppEnumInfo e =
   text "data" <+> enumHaskellType e <$$>
   indent 3 (vcatPrefix1 (text "= ") (text "| ") (pretty <$> Map.keys (e^.enumCtors))) <>
-  text "deriving (HPB.Eq, HPB.Ord)" <$$>
+  text "deriving (HPB.Eq, HPB.Ord, HPB.Show)" <$$>
   text "" <$$>
   text "instance HPB.Enum" <+> enumHaskellType e <+> text "where" <$$>
   indent 2 (ppToEnumBindings e) <$$>

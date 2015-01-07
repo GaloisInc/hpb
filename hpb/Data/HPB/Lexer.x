@@ -6,11 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Data.HPB.Lexer
-  ( Base(..)
-  , NumLit(..)
-  , StringLit(..)
-  , CustomOption(..)
-  , Token(..)
+  ( Token(..)
   , Alex
   , runAlex
   , getSourcePos
@@ -62,7 +58,7 @@ $any = [. $newline]
   | "to"
   | "true"
 
-@special = "(" | ")" | "[" | "]" | "{" | "}" | "=" | "." | "," | ";"
+@special = "(" | ")" | "[" | "]" | "{" | "}" | "=" | "." | "," | ";" | "-"
 
 @newline = $newline|"\r\n"
 @string_char = [^$newline\\\"]|"\\\""
@@ -174,12 +170,15 @@ data AlexInput = AlexInput {
     , _alex_pos  :: {-# UNPACK #-} !SourcePos
     , _bytes_to_char :: {-# UNPACK #-} !Int64
     , _prev_char :: {-# UNPACK #-} !Char
+      -- | Position of last token returned.
+    , _alex_last_token_pos :: {-# UNPACK #-} !SourcePos
     }
 
+-- | Remaining bytes in input.
 alex_bs :: Simple Lens AlexInput LazyBS.ByteString
 alex_bs = lens _alex_bs (\s v -> s { _alex_bs = v })
 
--- | Current position.
+-- | Current position in file.
 alex_pos :: Simple Lens AlexInput SourcePos
 alex_pos = lens _alex_pos (\s v -> s { _alex_pos = v })
 
@@ -190,6 +189,10 @@ bytes_to_char = lens _bytes_to_char (\s v -> s { _bytes_to_char = v })
 -- | Number of bytes remaining in current char.
 prev_char :: Simple Lens AlexInput Char
 prev_char = lens _prev_char (\s v -> s { _prev_char = v })
+
+-- | Position of last token returned (used for error reporting).
+alex_last_token_pos :: Simple Lens AlexInput SourcePos
+alex_last_token_pos = lens _alex_last_token_pos (\s v -> s { _alex_last_token_pos= v })
 
 bytes_remaining :: AlexInput -> Int64
 bytes_remaining inp = LazyBS.length (inp^.alex_bs)
@@ -236,19 +239,29 @@ alexGetByte inp = do
 ------------------------------------------------------------------------
 -- Alex
 
-newtype Alex a = Alex { unAlex :: StateT AlexInput (ErrorT String Identity) a }
+-- | Monad for lexer.
+newtype Alex a = Alex { unAlex :: ErrorT String (StateT AlexInput Identity) a }
   deriving (Functor, Applicative, Monad)
 
 runAlex :: FilePath
         -> LazyBS.ByteString
         -> Alex a
-        -> Either String a
-runAlex path bs m = runIdentity $ runErrorT $ evalStateT (unAlex m) s
-  where s = AlexInput { _alex_bs = bs
-                      , _alex_pos = Pos (Text.pack path) 1 1
-                      , _bytes_to_char = 0
-                      , _prev_char = '\n'
-                      }
+        -> Either (SourcePos, String) a
+runAlex path bs m = runIdentity $ do
+  let p0 = Pos (Text.pack path) 1 0
+  let s0 = AlexInput { _alex_bs = bs
+                     , _alex_pos = p0
+                     , _bytes_to_char = 0
+                     , _prev_char = '\n'
+                     , _alex_last_token_pos = p0
+                     }
+  flip evalStateT s0 $ do
+    mv <- runErrorT (unAlex m)
+    s <- get
+    return $
+      case mv of
+        Left e  -> Left (s^.alex_last_token_pos, e)
+        Right v -> Right v
 
 getTokens :: Alex [Posd Token]
 getTokens = go []
@@ -264,7 +277,7 @@ tokenizeFile :: FilePath -> IO [Posd Token]
 tokenizeFile path = do
   bs <- LazyBS.readFile path
   case runAlex path bs getTokens of
-    Left e -> fail e
+    Left (p,e) -> fail $ "Error parsing at " ++ show p ++ "\n  " ++ e
     Right v -> return v
 
 lexToken :: Alex (Posd Token)
@@ -290,12 +303,13 @@ lexToken = do
       Alex $ put inp'
       lexToken
     AlexToken inp' _len action -> do
-      Alex $ put inp'
+      let p = inp^.alex_pos
+      -- Update position to next state with token position for the token we return.
+      Alex $ put (inp' & alex_last_token_pos .~ p)
       -- Length is difference in bytestring lengths
       let len = bytes_remaining inp - bytes_remaining inp'
       -- Get text from string.
       let s = decodeUtf8 $ LazyBS.toStrict $ LazyBS.take (fromIntegral len) (inp^.alex_bs)
-      let p = inp^.alex_pos
       let tkn = Posd (action s) p
       return tkn
 

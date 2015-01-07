@@ -175,9 +175,10 @@ loadAndParseFile path = do
     Right contents -> do
       case parseDecls path contents of
         Right m -> return m
-        Left msg -> do
-          fail $ "Error parsing " ++ path ++ ":\n"
-                  ++ show (PP.indent 2 (PP.text msg))
+        Left (p,msg) -> do
+          fail $ show $
+            PP.text "Parse error" PP.<+> PP.pretty p PP.<> PP.text ":" PP.<$$>
+            PP.indent 2 (PP.text msg)
 
 
 getFileName :: FilePath -> ModuleName -> IO (FilePath,FilePath)

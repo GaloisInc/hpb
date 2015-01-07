@@ -170,21 +170,29 @@ data NumLit = NumLit { numBase :: Base
                      , numVal :: Integer
                      }
 
+instance Num NumLit where
+  negate n = n { numVal = negate (numVal n) }
+
 instance Show NumLit where
   show n = show (pretty n)
 
 instance Pretty NumLit where
   pretty (NumLit b v) = do
-    let ppNum 0 = text "0"
-        ppNum n = ppDigits n PP.empty
-        ppDigits 0 prev = prev
-        ppDigits n prev = do
-          let (q,r) = n `quotRem` baseVal b
-          ppDigits q (integer r <> prev)
-    case b of
-      Oct -> text "0" <> ppNum v
-      Dec -> ppNum v
-      Hex -> text "0x" <> ppNum v
+    -- Get prefix for base
+    let pre = case b of
+               Oct -> text "0"
+               Dec -> text ""
+               Hex -> text "0x"
+    -- Prefix negation sign if needed.
+    case v of
+      0 -> pre <> text "0"
+      _ | v < 0 -> text "-" <> pre <> ppDigits (abs v) PP.empty
+        | otherwise         -> pre <> ppDigits v PP.empty
+        where -- Pretty print digits
+              ppDigits 0 prev = prev
+              ppDigits n prev = do
+                let (q,r) = n `quotRem` baseVal b
+                ppDigits q (integer r <> prev)
 
 ------------------------------------------------------------------------
 -- StringLit

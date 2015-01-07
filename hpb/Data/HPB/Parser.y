@@ -37,6 +37,7 @@ import Data.HPB.Lexer
   '.'          { Posd (TSpecial ".") _ }
   ','          { Posd (TSpecial ",") _ }
   ';'          { Posd (TSpecial ";") _ }
+  '-'          { Posd (TSpecial "-") _ }
 
   'enum'       { Posd (TKeyword "enum")       _ }
   'extend'     { Posd (TKeyword "extend")     _ }
@@ -182,6 +183,7 @@ ident : ident_tkn { tknAsIdent `fmap` $1 }
 
 num :: { Posd NumLit }
 num : num_tkn { tknAsNum `fmap` $1 }
+    | '-' num { negate `fmap` $2 }
 
 string :: { Posd StringLit }
 string : string_tkn { tknAsString `fmap` $1 }
@@ -206,7 +208,7 @@ list_rev(e) : { [] }
 ------------------------------------------------------------------------
 -- Parsing declarations
 
-parseDecls :: FilePath -> LazyBS.ByteString -> Either String Package
+parseDecls :: FilePath -> LazyBS.ByteString -> Either (SourcePos, String) Package
 parseDecls path bs = runAlex path bs parse
 
 parseError :: Posd Token -> Alex a
