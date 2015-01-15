@@ -15,7 +15,8 @@ module Data.HPB (
   , serializeMessage'
   , deserializeMessage
   , deserializeMessage'
-  , readDelimitedFromHandle
+  , getDelimited
+  , putDelimited
     -- * Field definitions
   , int32Field
   , int64Field
@@ -56,6 +57,8 @@ module Data.HPB (
   , sfixed64RepeatedField
   , floatRepeatedField
   , doubleRepeatedField
+    -- * Utilities
+  , varint64
     -- * Re-exports
   , Data.Int.Int32
   , Data.Int.Int64
@@ -294,8 +297,8 @@ deserializeMessage' rep s = runST $ do
   seenFields <- H.new
   evalStateT (populateMessage seenFields rep (initMessage rep)) s
 
-readDelimitedFromHandle :: HasMessageRep a => Handle -> IO a
-readDelimitedFromHandle h = do
+getDelimited :: HasMessageRep a => Handle -> IO a
+getDelimited h = do
   len <- alloca $ \p -> do
     readVarint' $ do
       read_cnt <- hGetBuf h p 1
@@ -366,6 +369,13 @@ serializeMessage = serializeMessage' messageRep
 
 serializeMessage' :: MessageRep a -> a -> Builder
 serializeMessage' rep x = V.foldr (\f s -> f x <> s) mempty (fieldSerializers rep)
+
+-- | Write a delimited message to the handle.  It is recommended that the handle is
+-- set to binary and block buffering mode.  See @hSetBinaryMode@ and @hSetBuffering@.
+putDelimited :: HasMessageRep a => Handle -> a -> IO ()
+putDelimited h v = do
+  hPutBuilder h (lengthDelimBuilder (serializeMessage v))
+  hFlush h
 
 emptyMessageRep :: Monoid a => Text -> MessageRep a
 emptyMessageRep nm =
@@ -503,12 +513,14 @@ encodeStrictLengthDelimField num b =
   encodeField num lengthDelimType $
      varint64 (fromIntegral (B.length b)) <> byteString b
 
-encodeLengthDelimField :: FieldNumber -> Builder -> Builder
-encodeLengthDelimField num b = do
-    encodeField num lengthDelimType $
-      varint64 (fromIntegral (LazyB.length s)) <> lazyByteString s
+
+lengthDelimBuilder :: Builder -> Builder
+lengthDelimBuilder b = varint64 (fromIntegral (LazyB.length s)) <> lazyByteString s
   where s = toLazyByteString b
 
+encodeLengthDelimField :: FieldNumber -> Builder -> Builder
+encodeLengthDelimField num b = do
+    encodeField num lengthDelimType (lengthDelimBuilder b)
 
 recordFieldNum :: FieldNumber
                -> FieldDeserializer a
