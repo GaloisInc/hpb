@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Data.HPB.AST
   ( Package(..)
   , Decl(..)
@@ -15,6 +16,9 @@ module Data.HPB.AST
   , FieldDecl(..)
   , FieldRule(..)
   , Field(..)
+  , findFieldOption
+  , fieldDefault
+  , fieldIsPacked
   , FieldType(..)
   , extensionMax
     -- * Enum
@@ -29,6 +33,7 @@ module Data.HPB.AST
   , OptionDecl(..)
   , OptionName(..)
   , Val(..)
+  , asBoolVal
     -- * Base types
   , Ident(..)
   , ScalarType(..)
@@ -42,15 +47,22 @@ module Data.HPB.AST
   , nextCol
   , nextLine
   , Posd(..)
+  , failAt
   ) where
 
 import Control.Applicative
+import Control.Lens
 import Data.Foldable (Foldable)
+import Data.Maybe
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Traversable (Traversable)
 import Text.PrettyPrint.Leijen as PP hiding ((<$>), line)
+
+failAt :: Monad m => SourcePos -> String -> m a
+failAt p msg = fail $ show $
+  pretty p <> text ":" <$$>
+  indent 2 (text msg)
 
 ------------------------------------------------------------------------
 -- SourcePos
@@ -170,8 +182,20 @@ data NumLit = NumLit { numBase :: Base
                      , numVal :: Integer
                      }
 
+instance Eq NumLit where
+  x == y = numVal x == numVal y
+
+instance Ord NumLit where
+  compare x y = compare (numVal x) (numVal y)
+
 instance Num NumLit where
+  x + y = x { numVal = numVal x + numVal y }
+  x * y = x { numVal = numVal x * numVal y }
   negate n = n { numVal = negate (numVal n) }
+  abs x = x { numVal = abs (numVal x) }
+  signum x = signum x
+  fromInteger = NumLit Dec
+
 
 instance Show NumLit where
   show n = show (pretty n)
@@ -179,15 +203,15 @@ instance Show NumLit where
 instance Pretty NumLit where
   pretty (NumLit b v) = do
     -- Get prefix for base
-    let pre = case b of
-               Oct -> text "0"
-               Dec -> text ""
-               Hex -> text "0x"
+    let prefix = case b of
+                   Oct -> text "0"
+                   Dec -> text ""
+                   Hex -> text "0x"
     -- Prefix negation sign if needed.
     case v of
-      0 -> pre <> text "0"
-      _ | v < 0 -> text "-" <> pre <> ppDigits (abs v) PP.empty
-        | otherwise         -> pre <> ppDigits v PP.empty
+      0 -> prefix <> text "0"
+      _ | v < 0 -> text "-" <> prefix <> ppDigits (abs v) PP.empty
+        | otherwise         -> prefix <> ppDigits v PP.empty
         where -- Pretty print digits
               ppDigits 0 prev = prev
               ppDigits n prev = do
@@ -230,6 +254,12 @@ instance Pretty Val where
   pretty (IdentVal v) = pretty v
   pretty (StringVal v) = pretty v
   pretty (BoolVal b) = pretty b
+
+asBoolVal :: Monad m => String -> Posd Val -> m Bool
+asBoolVal msg (Posd v p) =
+  case v of
+    BoolVal b -> return b
+    _ -> failAt p msg
 
 ------------------------------------------------------------------------
 -- OptionDecl
@@ -294,9 +324,25 @@ instance Pretty FieldType where
 
 data Field = Field { fieldType :: !(Posd FieldType)
                    , fieldName :: !(Posd Ident)
+                     -- | The unique numbered tag associated with the fiel.d
                    , fieldTag  :: !(Posd NumLit)
                    , fieldOptions :: [OptionDecl]
                    }
+
+findFieldOption :: Ident -> Field -> Maybe (Posd Val)
+findFieldOption nm f = listToMaybe $
+  [ v | OptionDecl (Posd (KnownName onm) _) v <- fieldOptions f
+      , onm == nm
+  ]
+
+fieldDefault :: Field -> Maybe (Posd Val)
+fieldDefault = findFieldOption "default"
+
+fieldIsPacked :: Monad m => Field -> m Bool
+fieldIsPacked f =
+  case findFieldOption "packed" f of
+    Just v -> asBoolVal "packed value must be a Boolean." v
+    Nothing -> return False
 
 instance Pretty Field where
   pretty (Field tp nm v opts) =
@@ -322,7 +368,9 @@ instance Pretty FieldRule where
 -- FieldDecl
 
 -- | A pair contining a field and the associated rule.
-data FieldDecl = FieldDecl FieldRule Field
+data FieldDecl = FieldDecl { fieldDeclRule :: FieldRule
+                           , fieldDeclField :: Field
+                           }
 
 instance Pretty FieldDecl where
   pretty (FieldDecl rl f) = pretty rl <+> pretty f

@@ -60,7 +60,6 @@ import Data.HPB.Lexer
   'true'       { Posd (TKeyword "true")     _ }
 %%
 
-
 topLevel :: { Package }
 topLevel : 'package' compound_name ';' list(decl) { Package (Just $2) $4 }
          | list(decl) { Package Nothing $1 }

@@ -1,3 +1,14 @@
+------------------------------------------------------------------------
+-- |
+-- Module           : Data.HPB.Resolver
+-- Description      : Provides overrides for symbolic simulator
+--                    specific operations.
+-- Copyright        : (c) Galois, Inc 2015
+-- Maintainer       : Joe Hendrix <jhendrix@galois.com>
+-- Stability        : provisional
+--
+-- This module provides symbolic simulator specific overrides.
+------------------------------------------------------------------------
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards #-}
 module Data.HPB.Resolver
@@ -37,23 +48,9 @@ isUpperRoman c = 'A' <= c && c <= 'Z'
 isLowerRoman :: Char -> Bool
 isLowerRoman c = 'a' <= c && c <= 'z'
 
-failAt :: Monad m => A.SourcePos -> String -> m a
-failAt p msg = fail $ show $
-  pretty p <> text ":" <$$>
-  indent 2 (text msg)
-
 vcatPrefix1 :: Doc -> Doc -> [Doc] -> Doc
 vcatPrefix1 _ _ [] = PP.empty
 vcatPrefix1 ph pr (h:r) = hcat ((ph <> h <> line) : fmap (\v -> pr <> v <> line) r)
-
-------------------------------------------------------------------------
--- Value utilities
-
-asBoolVal :: Monad m => String -> A.Posd A.Val -> m Bool
-asBoolVal msg (A.Posd v p) =
-  case v of
-    A.BoolVal b -> return b
-    _ -> failAt p msg
 
 ------------------------------------------------------------------------
 -- ModuleName
@@ -207,15 +204,15 @@ extractEnumFieldInfo :: A.EnumField -> EnumWriter ()
 extractEnumFieldInfo (A.EnumOption (A.OptionDecl (A.Posd (A.KnownName "allow_alias") p) v)) = do
   old_val <- use enumAllowAlias
   when (isJust old_val) $ do
-    failAt p $ "allow_alias already set."
-  b <- asBoolVal "allow_alias expected Boolean value." v
+    A.failAt p $ "allow_alias already set."
+  b <- A.asBoolVal "allow_alias expected Boolean value." v
   enumAllowAlias .= Just b
 extractEnumFieldInfo (A.EnumOption _) = do
   return ()
 extractEnumFieldInfo (A.EnumValue (A.Posd nm p) v) = do
   im <- use enumIdentMap
   case Map.lookup nm im of
-    Just old_p -> failAt p $ show nm ++ " already declared at " ++ show old_p ++ "."
+    Just old_p -> A.failAt p $ show nm ++ " already declared at " ++ show old_p ++ "."
     Nothing -> return ()
 
   vm <- use enumValueMap
@@ -226,62 +223,24 @@ extractEnumFieldInfo (A.EnumValue (A.Posd nm p) v) = do
     Nothing -> do
       enumCtors %= Map.insert nm w
       case toUpperFirstName (show nm) of
-        Nothing -> failAt p $ show nm ++ " could not be converted to a Haskell constructor."
+        Nothing -> A.failAt p $ show nm ++ " could not be converted to a Haskell constructor."
         Just t -> enumValues %= (Seq.|> t)
     Just{} -> do
       case toLowerFirstName (show nm) of
-        Nothing -> failAt p $ show nm ++ " could not be converted to a lower case name."
+        Nothing -> A.failAt p $ show nm ++ " could not be converted to a lower case name."
         Just t -> enumValues %= (Seq.|> Text.pack t)
   enumValueMap %= Map.insertWith (++) w [nm]
 
 ------------------------------------------------------------------------
--- FieldInfo
-
-data FieldInfo = FieldInfo { fieldPos :: !A.SourcePos
-                           , fieldIdent :: !Ident
-                           , fieldTag  :: !A.NumLit
-                           , fieldRule :: !A.FieldRule
-                           , fieldType :: !(A.Posd A.FieldType)
-                           , _fieldDefault :: !(Maybe (A.Posd A.Val))
-                           , _fieldIsPacked :: !Bool
-                           }
-
-fieldDefault :: Simple Lens FieldInfo (Maybe (A.Posd A.Val))
-fieldDefault = lens _fieldDefault (\s v -> s { _fieldDefault = v })
-
-fieldIsPacked :: Simple Lens FieldInfo Bool
-fieldIsPacked = lens _fieldIsPacked (\s v -> s { _fieldIsPacked = v })
-
--- | Get name of lens associated with field.
-fieldLensName :: String -> FieldInfo -> String
-fieldLensName prefix f =
-    case toLowerFirstName snm of
-      Nothing -> error "Could not interpret field name as lens."
-      Just s -> prefix ++ "_" ++ s
-  where nm = show (fieldIdent f)
-        snm = case fieldRule f of
-                A.Repeated -> nm ++ "s"
-                _ -> nm
-
-------------------------------------------------------------------------
 -- MessageInfo
 
-type MessageFieldWriter = StateT FieldInfo (ErrorT String Identity)
-
-extractMessageFieldOptions :: A.OptionDecl -> MessageFieldWriter ()
-extractMessageFieldOptions (A.OptionDecl (A.Posd nm _) v) = do
-  case nm of
-    A.KnownName "default" -> fieldDefault .= Just v
-    A.KnownName "packed" -> do
-      b <- asBoolVal "packed value must be a Boolean." v
-      fieldIsPacked .= b
-    _ -> return ()
-
+-- | A message and list of fields prior to resolution.
 data MessageInfo = MessageInfo { messageName :: Ident
-                               , _messageFields :: Seq FieldInfo
+                               , _messageFields :: Map Integer A.FieldDecl
                                }
 
-messageFields :: Simple Lens MessageInfo (Seq FieldInfo)
+-- | List of message fields ordered by tag.
+messageFields :: Simple Lens MessageInfo (Map Integer A.FieldDecl)
 messageFields = lens _messageFields (\s v -> s { _messageFields = v })
 
 messageLowerPrefix :: MessageInfo -> String
@@ -295,30 +254,29 @@ type MessageWriter = StateT MessageInfo (ErrorT String Identity)
 extractMessageField :: A.MessageField -> MessageWriter ()
 extractMessageField mf =
   case mf of
-    A.MessageField (A.FieldDecl rl f) -> do
-      let f0 = FieldInfo { fieldPos = A.pos (A.fieldName f)
-                         , fieldIdent = A.val (A.fieldName f)
-                         , fieldTag = A.val (A.fieldTag f)
-                         , fieldRule = rl
-                         , fieldType = A.fieldType f
-                         , _fieldDefault = Nothing
-                         , _fieldIsPacked = False
-                         }
-      fi <- lift $ flip execStateT f0 $ do
-              mapM_ extractMessageFieldOptions (A.fieldOptions f)
-      messageFields %= (Seq.|> fi)
+    A.MessageField f -> do
+      m <- use messageFields
+      let tag = A.numVal $ A.val $ A.fieldTag $ A.fieldDeclField f
+      case Map.lookup tag m of
+        Nothing -> return ()
+        Just old_field -> do
+          let nm     = show $ A.val $ A.fieldName $ A.fieldDeclField f
+          let old_nm = show $ A.val $ A.fieldName $ A.fieldDeclField old_field
+          let p = A.pos $ A.fieldName $ A.fieldDeclField f
+          A.failAt p $ "The fields " ++ nm ++ " and " ++ old_nm ++ " assigned the same tag."
+      messageFields .= Map.insert tag f m
     A.MessageOption _ -> do
       return ()
     A.OneOf nm _ -> do
-      failAt (A.pos nm) $ "oneof is not yet supported."
+      A.failAt (A.pos nm) $ "oneof is not yet supported."
     A.Extensions p _ _ -> do
-      failAt p $ "Extensions are not yet supported."
+      A.failAt p $ "Extensions are not yet supported."
     A.LocalEnum e -> do
-      failAt (A.enumPos e) $ "Local enumerations are not yet supported."
+      A.failAt (A.enumPos e) $ "Local enumerations are not yet supported."
     A.LocalMessage m -> do
-      failAt (A.pos (A.messageName m)) $ "Local messages are not yet supported."
+      A.failAt (A.pos (A.messageName m)) $ "Local messages are not yet supported."
     A.LocalExtend e -> do
-      failAt (A.pos (A.extendMessage e)) $ "Extensions are not yet supported."
+      A.failAt (A.pos (A.extendMessage e)) $ "Extensions are not yet supported."
 
 ------------------------------------------------------------------------
 -- FileContext
@@ -346,7 +304,7 @@ reserveName p nm = do
   m <- use fcIdentMap
   case Map.lookup nm m of
     Nothing -> fcIdentMap %= Map.insert nm p
-    Just old_p -> failAt p $ show nm ++ " already defined at " ++ show old_p ++ "."
+    Just old_p -> A.failAt p $ show nm ++ " already defined at " ++ show old_p ++ "."
 
 extractFileEnum :: A.EnumDecl -> FileWriter ()
 extractFileEnum d = do
@@ -356,7 +314,7 @@ extractFileEnum d = do
   e <- lift $ flip execStateT (emptyEnumInfo (A.enumIdent d)) $ do
          mapM_ extractEnumFieldInfo (A.enumFields d)
   when (Map.null (e^.enumCtors)) $ do
-    failAt p $ show nm ++ " must contain at least one value."
+    A.failAt p $ show nm ++ " must contain at least one value."
   when (e^.enumAllowAlias /= Just True) $ do
     let isDup (_nm, l) = length l > 1
     case filter isDup $ Map.toList (e^.enumValueMap) of
@@ -368,7 +326,7 @@ extractMessage :: A.MessageDecl -> FileWriter ()
 extractMessage (A.MessageDecl (A.Posd nm p) fields) = do
   reserveName p nm
   let m0 = MessageInfo { messageName = nm
-                       , _messageFields = Seq.empty
+                       , _messageFields = Map.empty
                        }
   m <- lift $ flip execStateT m0 $ do
          mapM_ extractMessageField fields
@@ -418,19 +376,19 @@ resolveIdentType m0 cnm@(A.CompoundName l0) = go m0 l0
           d <- go1 m nm
           case (d,l) of
             (_,[]) -> return d
-            (EnumDef{}, _) -> failAt (A.pos nm) $ "Could not resolve " ++ show (pretty cnm) ++ "."
+            (EnumDef{}, _) -> A.failAt (A.pos nm) $ "Could not resolve " ++ show (pretty cnm) ++ "."
             (MessageDef{}, _) -> do
               --TODO: Add support for compound names.
-              failAt (A.pos nm) $ "Could not resolve " ++ show (pretty cnm) ++ "."
+              A.failAt (A.pos nm) $ "Could not resolve " ++ show (pretty cnm) ++ "."
         go1 m (A.Posd nm p) = do
           case Map.lookup nm m of
-            Nothing -> failAt p $ "Could not resolve " ++ show (pretty cnm) ++ "."
+            Nothing -> A.failAt p $ "Could not resolve " ++ show (pretty cnm) ++ "."
             Just d -> return d
 
 lookupEnumCtor :: Monad m => TypeContext -> A.SourcePos -> Ident -> m Text
 lookupEnumCtor ctx p i = do
   case Map.lookup i (ctx^.localEnumMap) of
-    Nothing -> failAt p $ "Unknown identifier: " ++ show i ++ "."
+    Nothing -> A.failAt p $ "Unknown identifier: " ++ show i ++ "."
     Just v -> return v
 
 mkTypeContext :: FileContext -> TypeContext
@@ -537,34 +495,47 @@ resolveFieldType ctx (A.Posd (A.GlobalNamedType tp) _p) =
 ------------------------------------------------------------------------
 -- ResolvedFieldInfo
 
+-- | A field in a message with all information needed to pretty-print the
+-- message to Haskell.
 data ResolvedFieldInfo = RFI { rfiIdent :: !Ident
                                -- | Name of lens for field as a string.
                              , rfiLensName :: !String
                              , rfiRule :: !A.FieldRule
                              , rfiType :: !ResolvedType
+                               -- | The unique numbered tag associated with the field.
                              , rfiTag  :: !A.NumLit
                              , rfiDefault :: !(Maybe ResolvedVal)
                              , rfiIsPacked :: !Bool
                              }
 
+-- | Get name of lens associated with field.
+fieldLensName :: String -> A.FieldRule -> Ident -> String
+fieldLensName prefix rl nm =
+    case toLowerFirstName snm of
+      Nothing -> error "Could not interpret field name as lens."
+      Just s -> prefix ++ "_" ++ s
+  where snm = case rl of
+                A.Repeated -> show nm ++ "s"
+                _ -> show nm
+
 resolveFieldInfo :: (Functor m, Monad m)
                  => TypeContext
                  -> String
                     -- ^ Prefix if field identifier has already been used.
-                 -> FieldInfo
+                 -> A.FieldDecl
                  -> m ResolvedFieldInfo
-resolveFieldInfo ctx prefix f = do
-  -- TODO: Check name is a lens name.
-  tp <- resolveFieldType ctx (fieldType f)
-  rv <- T.mapM (resolveValue ctx) (f^.fieldDefault)
-  let lens_nm = fieldLensName prefix f
-  return RFI { rfiIdent = fieldIdent f
-             , rfiLensName = lens_nm
-             , rfiRule = fieldRule f
+resolveFieldInfo ctx prefix (A.FieldDecl rl f) = do
+  tp <- resolveFieldType ctx (A.fieldType f)
+  rv <- T.mapM (resolveValue ctx) (A.fieldDefault f)
+  let nm = A.val (A.fieldName f)
+  packed <- A.fieldIsPacked f
+  return RFI { rfiIdent = nm
+             , rfiLensName = fieldLensName prefix rl nm
+             , rfiRule = rl
              , rfiType = tp
-             , rfiTag  = fieldTag f
+             , rfiTag  = A.val (A.fieldTag f)
              , rfiDefault = rv
-             , rfiIsPacked = f^.fieldIsPacked
+             , rfiIsPacked = packed
              }
 
 rfiRecordFieldName :: ResolvedFieldInfo -> Doc
@@ -672,6 +643,8 @@ shouldMergeFields f
 ------------------------------------------------------------------------
 -- ResolvedMessage
 
+-- | A protocol buffers message that has been resolved so that it may
+-- be pretty-printed to Haskell.
 data ResolvedMessage
    = RM { rmName :: Ident
         , rmFields :: [ResolvedFieldInfo]
@@ -680,7 +653,7 @@ data ResolvedMessage
 resolveMessage :: (Functor m, Monad m) => TypeContext -> MessageInfo -> m ResolvedMessage
 resolveMessage ctx m = do
   let msg_nm = messageLowerPrefix m
-  fields <- mapM (resolveFieldInfo ctx msg_nm) (Fold.toList (m^.messageFields))
+  fields <- mapM (resolveFieldInfo ctx msg_nm) (Map.elems (m^.messageFields))
   return RM { rmName = messageName m
             , rmFields = fields
             }
