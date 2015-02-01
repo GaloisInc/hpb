@@ -14,7 +14,7 @@ library
     hashtables,
     lens,
     mtl,
-    text,
+    text >= 1.2,
     unordered-containers,
     vector
 
@@ -40,7 +40,7 @@ executable hpb
     filepath,
     lens,
     mtl,
-    text,
+    text >= 1.2,
     utf8-string,
     wl-pprint
   build-tools: alex, happy
