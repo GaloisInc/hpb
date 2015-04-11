@@ -1,17 +1,16 @@
+{-# LANGUAGE CPP #-}
 module Main (main) where
 
-import Control.Applicative
 import Control.Exception
 import Control.Lens
-import Control.Monad
+import Control.Monad (when)
 import qualified Data.ByteString.Lazy as LazyBS
-import qualified Data.Foldable as Fold
+import Data.Foldable (forM_)
 import Data.Maybe
 import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import qualified Data.Text as Text
 import Data.Version
-
 import System.Console.CmdArgs.Explicit
 import System.Directory
 import System.Environment
@@ -19,14 +18,17 @@ import System.Exit
 import System.FilePath
 import System.IO
 import System.IO.Error
-import qualified Text.PrettyPrint.Leijen as PP
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import qualified Data.HPB.AST as A
 import Data.HPB.Parser
 import Data.HPB.Resolver
 
-
 import Paths_hpb (version)
+
+#if !MIN_VERSION_base(4,8,0)
+import Control.Applicative
+#endif
 
 hpbVersion :: String
 hpbVersion = "Haskell Protocol Buffers Generator (hpb) "
@@ -149,7 +151,7 @@ showParse :: Args -> IO ()
 showParse args = do
   when (Seq.null (args^.protoFiles)) $ do
     fail $ "Please provide a proto file as input."
-  Fold.forM_ (args^.protoFiles) $ \path -> do
+  forM_ (args^.protoFiles) $ \path -> do
     p <- loadAndParseFile path
     PP.displayIO stdout $ PP.renderPretty 1.0 maxBound $ PP.pretty p
     putStrLn ""
@@ -194,7 +196,7 @@ generateCode :: Args -> IO ()
 generateCode args = do
   when (Seq.null (args^.protoFiles)) $ do
     fail $ "Please provide a proto file as input."
-  Fold.forM_ (args^.protoFiles) $ \path -> do
+  forM_ (args^.protoFiles) $ \path -> do
     pkg <- loadAndParseFile path
     case resolvePackage path (args^.moduleName) pkg of
       Left msg -> fail msg

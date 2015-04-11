@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -50,14 +51,17 @@ module Data.HPB.AST
   , failAt
   ) where
 
-import Control.Applicative
-import Control.Lens
-import Data.Foldable (Foldable)
 import Data.Maybe
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Text.PrettyPrint.Leijen as PP hiding ((<$>), line)
+import Text.PrettyPrint.ANSI.Leijen as PP hiding ((<$>), line)
+
+#if !MIN_VERSION_base(4,8,0)
+import Data.Foldable (Foldable)
+import Data.Functor ((<$>))
+import Data.Traversable (Traversable)
+#endif
 
 failAt :: Monad m => SourcePos -> String -> m a
 failAt p msg = fail $ show $

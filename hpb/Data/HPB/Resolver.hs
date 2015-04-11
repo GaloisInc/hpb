@@ -9,6 +9,7 @@
 --
 -- This module provides symbolic simulator specific overrides.
 ------------------------------------------------------------------------
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternGuards #-}
 module Data.HPB.Resolver
@@ -17,9 +18,7 @@ module Data.HPB.Resolver
   , resolvePackage
   ) where
 
-import Control.Applicative
 import Control.Lens
-import Control.Monad.Error
 import Control.Monad.State
 import Data.Char
 import qualified Data.Foldable as Fold
@@ -34,10 +33,15 @@ import qualified Data.Text as Text
 import qualified Data.Traversable as T
 import Data.Word
 import System.FilePath
-import Text.PrettyPrint.Leijen as PP hiding ((<$>))
+import Text.PrettyPrint.ANSI.Leijen as PP hiding ((<$>))
 
 import Data.HPB.AST (Ident)
 import qualified Data.HPB.AST as A
+import Data.HPB.Partial
+
+#if !MIN_VERSION_base(4,8,0)
+import Control.Applicative
+#endif
 
 ppText :: Text -> Doc
 ppText t = text (Text.unpack t)
@@ -198,7 +202,7 @@ ppEnumInfo e =
   indent 2 (vcat (ppFromEnumBinding <$> Map.toList (e^.enumCtors))) <$$>
   text ""
 
-type EnumWriter = StateT EnumInfo (ErrorT String Identity)
+type EnumWriter = StateT EnumInfo Partial
 
 extractEnumFieldInfo :: A.EnumField -> EnumWriter ()
 extractEnumFieldInfo (A.EnumOption (A.OptionDecl (A.Posd (A.KnownName "allow_alias") p) v)) = do
@@ -249,7 +253,7 @@ messageLowerPrefix m =
     Just s -> s
     Nothing -> error "Could not interpret message name as a Haskell identifier."
 
-type MessageWriter = StateT MessageInfo (ErrorT String Identity)
+type MessageWriter = StateT MessageInfo Partial
 
 extractMessageField :: A.MessageField -> MessageWriter ()
 extractMessageField mf =
@@ -297,7 +301,7 @@ emptyFileContext =
        , _fcDefs     = Seq.empty
        }
 
-type FileWriter = StateT FileContext (ErrorT String Identity)
+type FileWriter = StateT FileContext Partial
 
 reserveName :: A.SourcePos -> Ident -> FileWriter ()
 reserveName p nm = do
@@ -735,7 +739,7 @@ instance Pretty Package where
     vcat (pretty <$> moduleDefs pkg)
 
 resolvePackage :: FilePath -> Maybe String -> A.Package -> Either String Package
-resolvePackage path mnm (A.Package pkg_nm decls) = runIdentity $ runErrorT $ do
+resolvePackage path mnm (A.Package pkg_nm decls) = runPartial $ do
   ctx <-
     flip execStateT emptyFileContext $ do
       mapM_ extractFileDecl decls

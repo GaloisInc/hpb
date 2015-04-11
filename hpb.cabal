@@ -28,10 +28,10 @@ library
   ghc-options: -Wall -threaded
   ghc-prof-options: -O2 -fprof-auto-top
 
-
 executable hpb
   build-depends:
     base >= 4,
+    ansi-wl-pprint,
     array,
     bytestring,
     cmdargs,
@@ -41,8 +41,7 @@ executable hpb
     lens,
     mtl,
     text >= 1.2,
-    utf8-string,
-    wl-pprint
+    utf8-string
   build-tools: alex, happy
 
   ghc-options: -Wall -threaded -rtsopts
@@ -51,6 +50,7 @@ executable hpb
   other-modules:
     Data.HPB.Lexer
     Data.HPB.Parser
+    Data.HPB.Partial
     Data.HPB.Resolver
 
   hs-source-dirs: hpb

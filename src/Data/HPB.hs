@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
@@ -89,7 +90,6 @@ module Data.HPB (
   , (Prelude..)
   ) where
 
-import Control.Applicative
 import Control.Lens hiding (Getter, Setter)
 import Control.Monad
 import Control.Monad.ST
@@ -116,6 +116,10 @@ import qualified Data.Vector as V
 import Data.Word
 import Foreign
 import System.IO
+
+#if !MIN_VERSION_base(4,8,0)
+import Data.Functor ((<$>))
+#endif
 
 ------------------------------------------------------------------------
 -- WireType

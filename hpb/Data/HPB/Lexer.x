@@ -1,5 +1,6 @@
 {
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
+{-# OPTIONS_GHC -fno-warn-tabs #-}
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -17,7 +18,6 @@ module Data.HPB.Lexer
 
 import Control.Applicative
 import Control.Lens
-import Control.Monad.Error
 import Control.Monad.State.Strict
 import qualified Data.ByteString.Lazy as LazyBS
 import qualified Data.ByteString.Lazy.UTF8 as UTF8
@@ -27,8 +27,9 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Text.Encoding
 import Data.Word
-import Text.PrettyPrint.Leijen as PP hiding (line)
+import Text.PrettyPrint.ANSI.Leijen as PP hiding (line)
 import Data.HPB.AST
+import Data.HPB.Partial
 }
 
 $alpha     = [a-z A-Z]
@@ -240,7 +241,7 @@ alexGetByte inp = do
 -- Alex
 
 -- | Monad for lexer.
-newtype Alex a = Alex { unAlex :: ErrorT String (StateT AlexInput Identity) a }
+newtype Alex a = Alex { unAlex :: PartialT (StateT AlexInput Identity) a }
   deriving (Functor, Applicative, Monad)
 
 runAlex :: FilePath
@@ -256,7 +257,7 @@ runAlex path bs m = runIdentity $ do
                      , _alex_last_token_pos = p0
                      }
   flip evalStateT s0 $ do
-    mv <- runErrorT (unAlex m)
+    mv <- runPartialT (unAlex m)
     s <- get
     return $
       case mv of

@@ -8,8 +8,8 @@ import Control.Applicative
 import qualified Data.ByteString.Lazy as LazyBS
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Text.PrettyPrint.Leijen hiding ((<$>))
-import qualified Text.PrettyPrint.Leijen as PP
+import Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import Data.HPB.AST
 import Data.HPB.Lexer
