@@ -1,6 +1,7 @@
 {
 {-# OPTIONS_GHC -fno-warn-missing-signatures #-}
 {-# OPTIONS_GHC -fno-warn-tabs #-}
+{-# OPTIONS_GHC -fno-warn-unused-binds #-}
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 {-# OPTIONS_GHC -fno-warn-unused-matches #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -319,7 +320,4 @@ getSourcePos = Alex $ use alex_pos
 
 lexer :: (Posd Token -> Alex a) -> Alex a
 lexer = (lexToken >>=)
-
-_unused :: a
-_unused = undefined iUnbox
 }
