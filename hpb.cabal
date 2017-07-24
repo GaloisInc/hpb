@@ -48,6 +48,7 @@ executable hpb
   ghc-prof-options: -fprof-auto-top -O2
 
   other-modules:
+    Data.HPB.AST
     Data.HPB.Lexer
     Data.HPB.Parser
     Data.HPB.Partial
