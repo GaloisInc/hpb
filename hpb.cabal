@@ -25,7 +25,7 @@ library
     Data.HPB
 
 
-  ghc-options: -Wall -threaded
+  ghc-options: -Wall
   ghc-prof-options: -O2 -fprof-auto-top
 
 executable hpb
@@ -53,6 +53,7 @@ executable hpb
     Data.HPB.Parser
     Data.HPB.Partial
     Data.HPB.Resolver
+    Paths_hpb
 
   hs-source-dirs: hpb
   main-is: Main_hpb.hs
