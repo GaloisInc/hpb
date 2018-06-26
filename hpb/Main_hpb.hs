@@ -164,7 +164,7 @@ printErrorAndExit msg = do
 exitOnError :: IOError -> IO a
 exitOnError e = printErrorAndExit (ioeGetErrorString e)
 
-loadAndParseFile :: FilePath -> IO A.Package
+loadAndParseFile :: FilePath -> IO A.Proto
 loadAndParseFile path = do
   mcontents <- try $ LazyBS.readFile path
   case mcontents of

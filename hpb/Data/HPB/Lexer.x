@@ -57,6 +57,7 @@ $any = [. $newline]
   | "returns"
   | "rpc"
   | "service"
+  | "syntax"
   | "to"
   | "true"
 

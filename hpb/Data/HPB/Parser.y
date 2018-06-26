@@ -15,7 +15,7 @@ import Data.HPB.AST
 import Data.HPB.Lexer
 }
 
-%name parse topLevel
+%name parse proto
 %error { parseError }
 %tokentype { Posd Token }
 %monad { Alex } { (>>=) } { return }
@@ -56,9 +56,17 @@ import Data.HPB.Lexer
   'returns'    { Posd (TKeyword "returns")  _ }
   'rpc'        { Posd (TKeyword "rpc")      _ }
   'service'    { Posd (TKeyword "service")  _ }
+  'syntax'     { Posd (TKeyword "syntax")   _ }
   'to'         { Posd (TKeyword "to")       _ }
   'true'       { Posd (TKeyword "true")     _ }
 %%
+
+syntax :: { Maybe Syntax }
+syntax : string { stringAsSyntax "syntax must be \"proto2\" or \"proto3\"." $1 }
+
+proto :: { Proto }
+proto : 'syntax' '=' syntax ';' topLevel { Proto $3 $5 }
+      | topLevel { Proto Nothing $1 }
 
 topLevel :: { Package }
 topLevel : 'package' compound_name ';' list(decl) { Package (Just $2) $4 }
@@ -207,7 +215,7 @@ list_rev(e) : { [] }
 ------------------------------------------------------------------------
 -- Parsing declarations
 
-parseDecls :: FilePath -> LazyBS.ByteString -> Either (SourcePos, String) Package
+parseDecls :: FilePath -> LazyBS.ByteString -> Either (SourcePos, String) Proto
 parseDecls path bs = runAlex path bs parse
 
 parseError :: Posd Token -> Alex a

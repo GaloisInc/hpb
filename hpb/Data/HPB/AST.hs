@@ -49,6 +49,10 @@ module Data.HPB.AST
   , nextLine
   , Posd(..)
   , failAt
+    -- * Syntax
+  , Syntax(..)
+  , Proto(..)
+  , stringAsSyntax
   ) where
 
 import Data.Maybe
@@ -512,3 +516,31 @@ instance Pretty Package where
     vcat (pretty <$> decls)
   pretty (Package Nothing decls) =
     vcat (pretty <$> decls)
+
+------------------------------------------------------------------------
+-- Syntax
+
+data Syntax = Proto2 | Proto3
+
+stringAsSyntax :: Monad m => String -> Posd StringLit -> m Syntax
+stringAsSyntax msg (Posd v p)
+  | str == "proto2" = return Proto2
+  | str == "proto3" = return Proto3
+  | otherwise       = failAt p msg
+  where str = stringText v
+
+instance Pretty Syntax where
+  pretty Proto2 = dquotes $ text "proto2"
+  pretty Proto3 = dquotes $ text "proto3"
+
+------------------------------------------------------------------------
+-- Proto
+
+data Proto = Proto (Maybe Syntax) Package
+
+instance Pretty Proto where
+  pretty (Proto (Just syn) pkg) =
+    text "syntax" <+> text "=" <+> pretty syn <> text ";" <$$>
+    pretty pkg
+  pretty (Proto Nothing pkg) =
+    pretty pkg
