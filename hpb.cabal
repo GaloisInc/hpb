@@ -24,7 +24,6 @@ library
   exposed-modules:
     Data.HPB
 
-
   ghc-options: -Wall
   ghc-prof-options: -O2 -fprof-auto-top
 
