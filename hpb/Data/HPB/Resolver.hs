@@ -669,6 +669,13 @@ ppResolvedMessage m =
     indent 3 (vcatPrefix1 (text "  ") (text ", ") (ppFieldDecl <$> fields)) <>
     text "}" <$$>
     text "" <$$>
+
+    text "instance HPB.Semigroup" <+> pretty nm <+> text "where" <$$>
+    text "  (<>) x y =" <+> pretty nm <+> text "{" <$$>
+    indent 17 (vcatPrefix1 (text "  ") (text ", ") (ppFieldAppend "x" "y" <$> fields)) <>
+    text "}" <$$>
+    text "" <$$>
+
     text "instance HPB.Monoid" <+> pretty nm <+> text "where" <$$>
     text "  mempty =" <+> pretty nm <+> text "{" <$$>
     indent 12 (vcatPrefix1 (text "  ") (text ", ") (ppFieldInit <$> fields)) <>
@@ -677,6 +684,7 @@ ppResolvedMessage m =
     indent 17 (vcatPrefix1 (text "  ") (text ", ") (ppFieldAppend "x" "y" <$> fields)) <>
     text "}" <$$>
     text "" <$$>
+
     hcat (ppFieldLens (pretty nm) <$> fields) <>
     text "instance HPB.HasMessageRep" <+> pretty nm <+> text "where" <$$>
     text "  messageRep" <$$>

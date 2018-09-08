@@ -70,7 +70,7 @@ module Data.HPB (
   , B.ByteString
 
   , Data.Monoid.Monoid(..)
-  , (Data.Monoid.<>)
+  , Data.Semigroup.Semigroup(..)
   , Data.String.fromString
 
   , (Control.Lens.&)
@@ -106,7 +106,8 @@ import qualified Data.HashSet as HSet
 import qualified Data.HashTable.ST.Basic as H
 import Data.Int
 import Data.Maybe
-import Data.Monoid
+import Data.Monoid hiding ( (<>) )
+import Data.Semigroup
 import Data.Sequence as Seq
 import qualified Data.String
 import Data.Text (Text)
@@ -632,7 +633,7 @@ bytesField = lengthDelimField id id
 stringField :: Text -> Required Text -> FieldDef a Text
 stringField = lengthDelimField Text.encodeUtf8 Text.decodeUtf8
 
-messageField :: Monoid m
+messageField :: (Semigroup m, Monoid m)
              => MessageRep m
              -> Text
              -> Bool -- ^ Indicates if the message is required.
