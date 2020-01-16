@@ -57,6 +57,10 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Text.PrettyPrint.ANSI.Leijen as PP hiding ((<$>), line)
 
+#if !MIN_VERSION_base(4,13,0)
+import Control.Monad.Fail( MonadFail )
+#endif
+
 #if !MIN_VERSION_base(4,8,0)
 import Data.Foldable (Foldable)
 import Data.Functor ((<$>))

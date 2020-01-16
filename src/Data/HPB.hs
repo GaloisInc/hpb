@@ -118,6 +118,10 @@ import Data.Word
 import Foreign
 import System.IO
 
+#if !MIN_VERSION_base(4,13,0)
+import Control.Monad.Fail( MonadFail )
+#endif
+
 #if !MIN_VERSION_base(4,8,0)
 import Data.Functor ((<$>))
 #endif
