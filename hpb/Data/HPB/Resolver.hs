@@ -104,7 +104,7 @@ isConId :: String -> Bool
 isConId "" = False
 isConId (c:r) = isUpper c && all isIdentChar r
 
-moduleNameFromString :: Monad m => String -> m ModuleName
+moduleNameFromString :: MonadFail m => String -> m ModuleName
 moduleNameFromString s0 = go [] s0
   where go r s = do
           case break (== '.') s of
@@ -150,23 +150,23 @@ emptyEnumInfo (A.Posd nm p) =
            }
 
 -- | List of Haskell identifiers associated with each enum.
-enumValues :: Simple Lens EnumInfo (Seq Text)
+enumValues :: Lens' EnumInfo (Seq Text)
 enumValues = lens _enumValues (\s v -> s { _enumValues = v })
 
 -- | Map each identifier to it's known location.
-enumIdentMap :: Simple Lens EnumInfo (Map Ident A.SourcePos)
+enumIdentMap :: Lens' EnumInfo (Map Ident A.SourcePos)
 enumIdentMap = lens _enumIdentMap (\s v -> s { _enumIdentMap = v })
 
 -- | Map each identifier used as a constructor to it's value.
-enumCtors :: Simple Lens EnumInfo (Map Ident Word32)
+enumCtors :: Lens' EnumInfo (Map Ident Word32)
 enumCtors = lens _enumCtors (\s v -> s { _enumCtors = v })
 
 -- | Map each enum value to an associated identifier.
-enumValueMap :: Simple Lens EnumInfo (Map Word32 [Ident])
+enumValueMap :: Lens' EnumInfo (Map Word32 [Ident])
 enumValueMap = lens _enumValueMap (\s v -> s { _enumValueMap = v })
 
 -- | Flag indicating if enum allows duplicates.
-enumAllowAlias :: Simple Lens EnumInfo (Maybe Bool)
+enumAllowAlias :: Lens' EnumInfo (Maybe Bool)
 enumAllowAlias = lens _enumAllowAlias (\s v -> s { _enumAllowAlias = v })
 
 enumHaskellType :: EnumInfo -> Doc
@@ -244,7 +244,7 @@ data MessageInfo = MessageInfo { messageName :: Ident
                                }
 
 -- | List of message fields ordered by tag.
-messageFields :: Simple Lens MessageInfo (Map Integer A.FieldDecl)
+messageFields :: Lens' MessageInfo (Map Integer A.FieldDecl)
 messageFields = lens _messageFields (\s v -> s { _messageFields = v })
 
 messageLowerPrefix :: MessageInfo -> String
@@ -289,10 +289,10 @@ data FileContext = FCtx { _fcIdentMap   :: !(Map Ident A.SourcePos)
                         , _fcDefs       :: !(Seq FileDef)
                         }
 
-fcIdentMap :: Simple Lens FileContext (Map Ident A.SourcePos)
+fcIdentMap :: Lens' FileContext (Map Ident A.SourcePos)
 fcIdentMap = lens _fcIdentMap (\s v -> s { _fcIdentMap = v })
 
-fcDefs :: Simple Lens FileContext (Seq FileDef)
+fcDefs :: Lens' FileContext (Seq FileDef)
 fcDefs = lens _fcDefs (\s v -> s { _fcDefs = v })
 
 emptyFileContext :: FileContext
@@ -356,21 +356,21 @@ data TypeContext = TypeContext { globalIdentMap :: !(Map Ident FileDef)
                                , _localEnumMap :: !(Map Ident Text)
                                }
 
-localIdentMap :: Simple Lens TypeContext (Map Ident FileDef)
+localIdentMap :: Lens' TypeContext (Map Ident FileDef)
 localIdentMap = lens _localIdentMap (\s v -> s { _localIdentMap = v })
 
-localEnumMap :: Simple Lens TypeContext (Map Ident Text)
+localEnumMap :: Lens' TypeContext (Map Ident Text)
 localEnumMap = lens _localEnumMap (\s v -> s { _localEnumMap = v })
 
-lookupGlobalType :: Monad m
+lookupGlobalType :: MonadFail m
                  => TypeContext -> A.CompoundName -> m FileDef
 lookupGlobalType ctx = resolveIdentType (globalIdentMap ctx)
 
-lookupLocalType :: Monad m
+lookupLocalType :: MonadFail m
                 => TypeContext -> A.CompoundName -> m FileDef
 lookupLocalType ctx = resolveIdentType (ctx^.localIdentMap)
 
-resolveIdentType :: Monad m
+resolveIdentType :: MonadFail m
                  => Map Ident FileDef
                  -> A.CompoundName
                  -> m FileDef
@@ -389,7 +389,7 @@ resolveIdentType m0 cnm@(A.CompoundName l0) = go m0 l0
             Nothing -> A.failAt p $ "Could not resolve " ++ show (pretty cnm) ++ "."
             Just d -> return d
 
-lookupEnumCtor :: Monad m => TypeContext -> A.SourcePos -> Ident -> m Text
+lookupEnumCtor :: MonadFail m => TypeContext -> A.SourcePos -> Ident -> m Text
 lookupEnumCtor ctx p i = do
   case Map.lookup i (ctx^.localEnumMap) of
     Nothing -> A.failAt p $ "Unknown identifier: " ++ show i ++ "."
@@ -429,7 +429,7 @@ ppResolvedVal prec rv =
     BoolVal True  ->  text "HPB.True"
     BoolVal False ->  text "HPB.False"
 
-resolveValue :: (Functor m, Monad m) => TypeContext -> A.Posd A.Val -> m ResolvedVal
+resolveValue :: (Functor m, MonadFail m) => TypeContext -> A.Posd A.Val -> m ResolvedVal
 resolveValue ctx (A.Posd v p) =
   case v of
     A.NumVal    x -> return $ NumVal x
@@ -477,7 +477,7 @@ ppResolvedTypeDefault prec rtp =
                     Seq.EmptyL -> error "illegal: Enumerator constains no elements."
                     h Seq.:< _ -> ppText h
 
-resolveFileDefType :: (Functor m, Monad m) => FileDef -> m ResolvedType
+resolveFileDefType :: (Functor m, MonadFail m) => FileDef -> m ResolvedType
 resolveFileDefType (EnumDef e) = return (EnumType e)
 resolveFileDefType (MessageDef m) = do
   let nm = show (messageName m)
@@ -485,7 +485,7 @@ resolveFileDefType (MessageDef m) = do
     Just t -> return (MessageType t)
     Nothing -> fail $ "Could not resolve message " ++ nm ++ " as a Haskell constructor."
 
-resolveFieldType :: (Functor m, Monad m)
+resolveFieldType :: (Functor m, MonadFail m)
                  => TypeContext
                  -> A.Posd A.FieldType
                  -> m ResolvedType
@@ -522,7 +522,7 @@ fieldLensName prefix rl nm =
                 A.Repeated -> show nm ++ "s"
                 _ -> show nm
 
-resolveFieldInfo :: (Functor m, Monad m)
+resolveFieldInfo :: (Functor m, MonadFail m)
                  => TypeContext
                  -> String
                     -- ^ Prefix if field identifier has already been used.
@@ -572,7 +572,7 @@ ppFieldInit rfi =
 
 ppFieldLens :: Doc -> ResolvedFieldInfo -> Doc
 ppFieldLens messageType f =
-    l_nm <+> text ":: HPB.Simple HPB.Lens" <+> messageType <+> ppRfiType 10 f <$$>
+    l_nm <+> text ":: HPB.Lens'" <+> messageType <+> ppRfiType 10 f <$$>
     l_nm <+> text "= HPB.lens" <+> rec_nm <+> setter <$$>
     line
  where l_nm = text (rfiLensName f)
@@ -654,7 +654,7 @@ data ResolvedMessage
         , rmFields :: [ResolvedFieldInfo]
         }
 
-resolveMessage :: (Functor m, Monad m) => TypeContext -> MessageInfo -> m ResolvedMessage
+resolveMessage :: (Functor m, MonadFail m) => TypeContext -> MessageInfo -> m ResolvedMessage
 resolveMessage ctx m = do
   let msg_nm = messageLowerPrefix m
   fields <- mapM (resolveFieldInfo ctx msg_nm) (Map.elems (m^.messageFields))
@@ -725,7 +725,7 @@ instance Pretty ResolvedDef where
   pretty (ResolvedEnum e) = ppEnumInfo e
   pretty (ResolvedMessage m) = ppResolvedMessage m
 
-resolveFileDef :: (Functor m, Monad m) => TypeContext -> FileDef -> m ResolvedDef
+resolveFileDef :: (Functor m, MonadFail m) => TypeContext -> FileDef -> m ResolvedDef
 resolveFileDef _ (EnumDef e) = return (ResolvedEnum e)
 resolveFileDef ctx (MessageDef m) =
   ResolvedMessage <$> resolveMessage ctx m

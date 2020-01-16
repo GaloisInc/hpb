@@ -63,7 +63,7 @@ import Data.Functor ((<$>))
 import Data.Traversable (Traversable)
 #endif
 
-failAt :: Monad m => SourcePos -> String -> m a
+failAt :: MonadFail m => SourcePos -> String -> m a
 failAt p msg = fail $ show $
   pretty p <> text ":" <$$>
   indent 2 (text msg)
@@ -259,7 +259,7 @@ instance Pretty Val where
   pretty (StringVal v) = pretty v
   pretty (BoolVal b) = pretty b
 
-asBoolVal :: Monad m => String -> Posd Val -> m Bool
+asBoolVal :: MonadFail m => String -> Posd Val -> m Bool
 asBoolVal msg (Posd v p) =
   case v of
     BoolVal b -> return b
@@ -342,7 +342,7 @@ findFieldOption nm f = listToMaybe $
 fieldDefault :: Field -> Maybe (Posd Val)
 fieldDefault = findFieldOption "default"
 
-fieldIsPacked :: Monad m => Field -> m Bool
+fieldIsPacked :: MonadFail m => Field -> m Bool
 fieldIsPacked f =
   case findFieldOption "packed" f of
     Just v -> asBoolVal "packed value must be a Boolean." v
