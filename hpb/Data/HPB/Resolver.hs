@@ -39,6 +39,10 @@ import Data.HPB.AST (Ident)
 import qualified Data.HPB.AST as A
 import Data.HPB.Partial
 
+#if !MIN_VERSION_base(4,13,0)
+import Control.Monad.Fail( MonadFail )
+#endif
+
 #if !MIN_VERSION_base(4,8,0)
 import Control.Applicative
 #endif

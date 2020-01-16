@@ -31,6 +31,11 @@ import Data.Word
 import Text.PrettyPrint.ANSI.Leijen as PP hiding (line)
 import Data.HPB.AST
 import Data.HPB.Partial
+
+#if !MIN_VERSION_base(4,13,0)
+import Control.Monad.Fail( MonadFail )
+#endif
+
 }
 
 $alpha     = [a-z A-Z]

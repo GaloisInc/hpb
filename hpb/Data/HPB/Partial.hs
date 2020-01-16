@@ -25,6 +25,11 @@ import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.State.Class
 
+#if !MIN_VERSION_base(4,13,0)
+import Control.Monad.Fail( MonadFail )
+import qualified Control.Monad.Fail as MF
+#endif
+
 -- | A Monad that may run or print an error.
 newtype PartialT m a = PartialT { runPartialT :: m (Either String a) }
 
