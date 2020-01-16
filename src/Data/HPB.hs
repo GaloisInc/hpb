@@ -74,8 +74,8 @@ module Data.HPB (
   , Data.String.fromString
 
   , (Control.Lens.&)
-  , Control.Lens.Simple
   , Control.Lens.Lens
+  , Control.Lens.Lens'
   , Control.Lens.lens
 
   , Prelude.Bool(..)
@@ -255,7 +255,7 @@ data MessageRep a
          , requiredFields :: !(V.Vector (FieldNumber, Text))
          }
 
-insSerializer :: Simple Lens a f
+insSerializer :: Lens' a f
               -> (f -> Builder)
               -> MessageRep a
               -> MessageRep a
@@ -394,10 +394,10 @@ emptyMessageRep nm =
 
 type InsertFn a f = f -> a -> a
 
-setTo :: Simple Lens a f -> InsertFn a f
+setTo :: Lens' a f -> InsertFn a f
 setTo l = (l .~)
 
-appendTo :: Simple Lens a (Seq f) -> InsertFn a f
+appendTo :: Lens' a (Seq f) -> InsertFn a f
 appendTo l v = l %~ (Seq.|> v)
 
 maybeApplyTo :: InsertFn a f
@@ -411,11 +411,11 @@ maybeApplyTo g = \mv ->
 -- message representation.
 type FieldDef a f
    = FieldNumber
-   -> Simple Lens a f
+   -> Lens' a f
    -> MessageRep a
    -> MessageRep a
 
-unexpectedType :: Monad m => Text -> Text -> m a
+unexpectedType :: MonadFail m => Text -> Text -> m a
 unexpectedType mnm nm = do
   fail $ "Unexpected type when decoding field " ++ Text.unpack nm
     ++ " in " ++ Text.unpack mnm
@@ -651,7 +651,7 @@ messageField field_rep nm req num fieldLens rep =
 -- message representation.
 type RepeatedFieldDef a f
    = FieldNumber
-   -> Simple Lens a (Seq f)
+   -> Lens' a (Seq f)
    -> MessageRep a
    -> MessageRep a
 

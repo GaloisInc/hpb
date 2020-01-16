@@ -80,23 +80,23 @@ defaultArgs = Args { _argAction  = GenerateCode
                    }
 
 -- | Action to use for assigning.
-argAction :: Simple Lens Args ArgAction
+argAction :: Lens' Args ArgAction
 argAction = lens _argAction (\a v -> a { _argAction = v })
 
 -- | List of paths to output.
-protoFiles :: Simple Lens Args (Seq FilePath)
+protoFiles :: Lens' Args (Seq FilePath)
 protoFiles = lens _protoFiles (\a v -> a { _protoFiles = v })
 
 -- | List of directories to use for searching for imports.
-importDirs :: Simple Lens Args (Seq FilePath)
+importDirs :: Lens' Args (Seq FilePath)
 importDirs = lens _importDirs (\a v -> a { _importDirs = v })
 
 -- | List of directories to use for searching for imports.
-outDir :: Simple Lens Args (Maybe FilePath)
+outDir :: Lens' Args (Maybe FilePath)
 outDir = lens _outDir (\a v -> a { _outDir = v })
 
 -- | List of directories to use for searching for imports.
-moduleName :: Simple Lens Args (Maybe String)
+moduleName :: Lens' Args (Maybe String)
 moduleName = lens _moduleName (\a v -> a { _moduleName = v })
 
 filenameArg :: Arg Args

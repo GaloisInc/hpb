@@ -36,13 +36,15 @@ instance (Functor m, Monad m) => Applicative (PartialT m) where
   (<*>) = ap
 
 instance Monad m => Monad (PartialT m) where
-  fail msg = PartialT $ return $ Left msg
   return v = PartialT $ return $ Right v
   m >>= h = PartialT $ do
     r <- runPartialT m
     case r of
       Left e -> return $ Left e
       Right v -> runPartialT (h v)
+
+instance Monad m => MonadFail (PartialT m) where
+  fail msg = PartialT $ return $ Left msg
 
 type Partial = PartialT Identity
 

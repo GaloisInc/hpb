@@ -177,23 +177,23 @@ data AlexInput = AlexInput {
     }
 
 -- | Remaining bytes in input.
-alex_bs :: Simple Lens AlexInput LazyBS.ByteString
+alex_bs :: Lens' AlexInput LazyBS.ByteString
 alex_bs = lens _alex_bs (\s v -> s { _alex_bs = v })
 
 -- | Current position in file.
-alex_pos :: Simple Lens AlexInput SourcePos
+alex_pos :: Lens' AlexInput SourcePos
 alex_pos = lens _alex_pos (\s v -> s { _alex_pos = v })
 
 -- | Number of bytes remaining in current char.
-bytes_to_char :: Simple Lens AlexInput Int64
+bytes_to_char :: Lens' AlexInput Int64
 bytes_to_char = lens _bytes_to_char (\s v -> s { _bytes_to_char = v })
 
 -- | Number of bytes remaining in current char.
-prev_char :: Simple Lens AlexInput Char
+prev_char :: Lens' AlexInput Char
 prev_char = lens _prev_char (\s v -> s { _prev_char = v })
 
 -- | Position of last token returned (used for error reporting).
-alex_last_token_pos :: Simple Lens AlexInput SourcePos
+alex_last_token_pos :: Lens' AlexInput SourcePos
 alex_last_token_pos = lens _alex_last_token_pos (\s v -> s { _alex_last_token_pos= v })
 
 bytes_remaining :: AlexInput -> Int64
@@ -243,7 +243,7 @@ alexGetByte inp = do
 
 -- | Monad for lexer.
 newtype Alex a = Alex { unAlex :: PartialT (StateT AlexInput Identity) a }
-  deriving (Functor, Applicative, Monad)
+  deriving (Functor, Applicative, Monad, MonadFail)
 
 runAlex :: FilePath
         -> LazyBS.ByteString
