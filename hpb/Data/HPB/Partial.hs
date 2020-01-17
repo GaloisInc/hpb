@@ -27,7 +27,7 @@ import Control.Monad.State.Class
 
 #if !MIN_VERSION_base(4,13,0)
 import Control.Monad.Fail( MonadFail )
-import qualified Control.Monad.Fail as MF
+import qualified Control.Monad.Fail
 #endif
 
 -- | A Monad that may run or print an error.
@@ -47,6 +47,10 @@ instance Monad m => Monad (PartialT m) where
     case r of
       Left e -> return $ Left e
       Right v -> runPartialT (h v)
+
+#if !MIN_VERSION_base(4,13,0)
+  fail msg = PartialT $ return $ Left msg
+#endif
 
 instance Monad m => MonadFail (PartialT m) where
   fail msg = PartialT $ return $ Left msg
