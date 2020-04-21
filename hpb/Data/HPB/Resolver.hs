@@ -750,8 +750,8 @@ instance Pretty Package where
     text "" <$$>
     vcat (pretty <$> moduleDefs pkg)
 
-resolvePackage :: FilePath -> Maybe String -> A.Package -> Either String Package
-resolvePackage path mnm (A.Package pkg_nm decls) = runPartial $ do
+resolvePackage :: FilePath -> Maybe String -> A.Proto -> Either String Package
+resolvePackage path mnm (A.Proto syn (A.Package pkg_nm decls)) = runPartial $ do
   ctx <-
     flip execStateT emptyFileContext $ do
       mapM_ extractFileDecl decls
